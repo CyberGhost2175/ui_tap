@@ -1,0 +1,40 @@
+# Flutter
+.dart_tool/
+.packages
+.pub/
+build/
+flutter_export_environment.sh
+
+# Android
+*.iml
+.gradle
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+.DS_Store
+/android/app/debug
+/android/app/profile
+/android/app/release
+
+# iOS
+ios/Pods/
+ios/.symlinks/
+ios/Flutter/Flutter.framework
+ios/Flutter/Flutter.podspec
+ios/Flutter/App.framework
+ios/Flutter/engine
+DerivedData/
+*.xcworkspace
+*.xcuserstate
+*.xcuserdata
+
+# VS Code
+.vscode/
+
+# MacOS system
+.DS_Store
+
+# IntelliJ
+.idea/
