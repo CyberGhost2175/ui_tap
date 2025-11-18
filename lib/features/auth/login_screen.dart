@@ -60,7 +60,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       setState(() => _obscurePassword = !_obscurePassword),
                 ),
               ),
-              const SizedBox(height: 10),
+              const SizedBox(height: 30),
               SizedBox(
                 width: double.infinity,
                 height: 50,

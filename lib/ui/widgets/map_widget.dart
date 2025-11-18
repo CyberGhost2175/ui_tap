@@ -21,8 +21,9 @@ class MapWidget extends StatefulWidget {
 
 class MapWidgetState extends State<MapWidget> {
   late final MapController _mapController;
-  LatLng _currentCenter = const LatLng(51.1694, 71.4491); // Astana
-  LatLng? _userLocation;
+
+  LatLng _center = const LatLng(51.1694, 71.4491); // fallback — Astana
+  LatLng? _gpsLocation; // текущее положение пользователя
 
   @override
   void initState() {
@@ -31,79 +32,107 @@ class MapWidgetState extends State<MapWidget> {
     _initLocation();
   }
 
+  /// Получаем GPS и двигаем карту
   Future<void> _initLocation() async {
-    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) return;
+    bool enabled = await Geolocator.isLocationServiceEnabled();
+    if (!enabled) return;
 
-    LocationPermission permission = await Geolocator.requestPermission();
-    if (permission == LocationPermission.denied) return;
+    LocationPermission p = await Geolocator.requestPermission();
+    if (p == LocationPermission.denied ||
+        p == LocationPermission.deniedForever) return;
 
     final pos = await Geolocator.getCurrentPosition();
+
+    _gpsLocation = LatLng(pos.latitude, pos.longitude);
+
     setState(() {
-      _userLocation = LatLng(pos.latitude, pos.longitude);
-      _currentCenter = _userLocation!;
+      _center = _gpsLocation!;
     });
+
+    /// 🔥 Двигаем карту на текущее местоположение (zoom = 16)
+    _mapController.move(_gpsLocation!, 16);
   }
 
-  void goToCurrentLocation() {
-    if (_userLocation != null) {
-      _mapController.move(_userLocation!, 15);
+  /// Нажатие на кнопку "моё местоположение"
+  void goToCurrentLocation() async {
+    if (_gpsLocation == null) {
+      await _initLocation();
+    }
+
+    if (_gpsLocation != null) {
+      _center = _gpsLocation!;
+      _mapController.move(_gpsLocation!, 16);
+      setState(() {});
     }
   }
 
-  void startSelectingLocation() => setState(() {});
-  void stopSelectingLocation() => setState(() {});
-  void confirmLocation() => debugPrint('Confirmed location: $_currentCenter');
+  /// Подтверждение выбранной точки
+  void confirmLocation() {
+    debugPrint("CONFIRMED LOCATION: $_center");
+  }
 
   @override
   Widget build(BuildContext context) {
-    return FlutterMap(
-      mapController: _mapController,
-      options: MapOptions(
-        initialCenter: _currentCenter,
-        initialZoom: 13.5,
-        onMapEvent: (event) {
-          if (event is MapEventMoveStart) {
-            widget.onMapDragStart();
-          }
-          if (event is MapEventMoveEnd) {
-            // 🧭 в новой версии центр хранится в event.camera.center
-            setState(() => _currentCenter = event.camera.center);
-            widget.onMapDragEnd();
-          }
-        },
-      ),
+    return Stack(
+      alignment: Alignment.center,
       children: [
-        // 🗺️ Слой карты
-        TileLayer(
-          urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-          userAgentPackageName: 'com.example.ui_tap',
-        ),
+        FlutterMap(
+          mapController: _mapController,
+          options: MapOptions(
+            initialCenter: _center,
+            initialZoom: 16, // 🔥 карта ВСЕГДА чуть приближена
+            maxZoom: 18,
+            minZoom: 10,
+            onMapEvent: (event) {
+              if (event is MapEventMoveStart) {
+                widget.onMapDragStart();
+              }
 
-        // 🔵 Радиус вокруг центра
-        CircleLayer(
-          circles: [
-            CircleMarker(
-              point: _currentCenter,
-              radius: 120,
-              color: Colors.blue.withOpacity(0.2),
-              borderStrokeWidth: 2,
-              borderColor: Colors.blueAccent,
+              if (event is MapEventMoveEnd) {
+                setState(() {
+                  _center = event.camera.center;
+                });
+                widget.onMapDragEnd();
+              }
+            },
+          ),
+          children: [
+            TileLayer(
+              urlTemplate: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+              userAgentPackageName: "com.example.ui_tap",
             ),
           ],
         ),
 
-        // 📍 Центральный маркер
-        MarkerLayer(
-          markers: [
-            Marker(
-              point: _currentCenter,
-              width: 40,
-              height: 40,
-              child: const Icon(
-                Icons.location_on,
-                color: Colors.blue,
-                size: 34,
+        // 🔵 Радиус вокруг маркера
+        Container(
+          width: 250,
+          height: 250,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: Colors.blue.withOpacity(0.15),
+            border: Border.all(
+              color: Colors.blue.withOpacity(0.45),
+              width: 2,
+            ),
+          ),
+        ),
+
+        // 📍 Маркер в центре
+        Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(
+              Icons.location_on,
+              size: 48,
+              color: Colors.blue,
+            ),
+            Container(
+              width: 10,
+              height: 10,
+              decoration: const BoxDecoration(
+                color: Colors.black26,
+                shape: BoxShape.circle,
               ),
             ),
           ],

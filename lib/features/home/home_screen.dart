@@ -18,20 +18,21 @@ class _BookingSearchScreenState extends State<BookingSearchScreen> {
   PanelState _panelState = PanelState.collapsed;
   PanelState? _previousPanelState;
 
+  bool _isSelectingLocation = false;
   bool _isDraggingMap = false;
 
   int _adults = 1;
   int _children = 0;
   String _filter = 'Квартира';
+  String _customPrice = '';
+  int _currentIndex = 0;
+
   DateTime _checkIn = DateTime.now().add(const Duration(days: 1));
   DateTime _checkOut = DateTime.now().add(const Duration(days: 6));
-  String _customPrice = '';
-
-  bool _isSelectingLocation = false;
-  int _currentIndex = 0;
 
   final GlobalKey<MapWidgetState> _mapKey = GlobalKey<MapWidgetState>();
 
+  // ---------------------------- PANEL HEIGHT ----------------------------
   double _getPanelHeight() {
     switch (_panelState) {
       case PanelState.collapsed:
@@ -43,6 +44,7 @@ class _BookingSearchScreenState extends State<BookingSearchScreen> {
     }
   }
 
+  // ---------------------------- PANEL ACTIONS ----------------------------
   void _handlePanelTap() {
     if (_panelState == PanelState.collapsed) {
       setState(() => _panelState = PanelState.expanded);
@@ -57,18 +59,19 @@ class _BookingSearchScreenState extends State<BookingSearchScreen> {
 
   void _toggleMapMode() {
     setState(() {
-      if (_panelState == PanelState.hidden) {
+      if (_isSelectingLocation) {
+        // выключаем режим выбора
         _panelState = PanelState.collapsed;
         _isSelectingLocation = false;
-        _mapKey.currentState?.stopSelectingLocation();
       } else {
+        // включаем режим выбора
         _panelState = PanelState.hidden;
         _isSelectingLocation = true;
-        _mapKey.currentState?.startSelectingLocation();
       }
     });
   }
 
+  // ---------------------------- CONFIRM LOCATION ----------------------------
   void _confirmLocation() {
     setState(() {
       _isSelectingLocation = false;
@@ -77,26 +80,31 @@ class _BookingSearchScreenState extends State<BookingSearchScreen> {
     });
   }
 
+  // ---------------------------- MOVE TO USER LOCATION ----------------------------
   void _goToCurrentLocation() {
     _mapKey.currentState?.goToCurrentLocation();
   }
 
+  // ---------------------------- GEO LOCATION ----------------------------
   Future<Position?> _getUserPosition() async {
-    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) return null;
+    bool enabled = await Geolocator.isLocationServiceEnabled();
+    if (!enabled) return null;
 
     LocationPermission permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
       if (permission == LocationPermission.denied) return null;
     }
+
     if (permission == LocationPermission.deniedForever) return null;
 
     return Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
   }
 
+  // ---------------------------- SEARCH ----------------------------
   Future<void> _performSearch() async {
     final pos = await _getUserPosition();
+
     final payload = {
       'adults': _adults,
       'children': _children,
@@ -111,33 +119,41 @@ class _BookingSearchScreenState extends State<BookingSearchScreen> {
         'longitude': pos.longitude,
       },
     };
-    debugPrint('SEARCH PAYLOAD: $payload');
+
+    debugPrint("SEARCH PAYLOAD: $payload");
   }
 
+  // ---------------------------- BUILD ----------------------------
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: Stack(
         children: [
+          // ------------------------ MAP ------------------------
           MapWidget(
             key: _mapKey,
             isSelectingLocation: _isSelectingLocation,
             onMapDragStart: () {
               _previousPanelState = _panelState;
               _isDraggingMap = true;
-              setState(() => _panelState = PanelState.hidden);
+
+              setState(() {
+                _panelState = PanelState.hidden;
+              });
             },
             onMapDragEnd: () async {
               await Future.delayed(const Duration(milliseconds: 150));
-              if (mounted) {
-                setState(() {
-                  _isDraggingMap = false;
-                  _panelState = _previousPanelState ?? PanelState.collapsed;
-                });
-              }
+
+              if (!mounted) return;
+
+              setState(() {
+                _isDraggingMap = false;
+                _panelState = _previousPanelState ?? PanelState.collapsed;
+              });
             },
           ),
 
+          // ------------------------ SEARCH PANEL ------------------------
           AnimatedPositioned(
             duration: const Duration(milliseconds: 250),
             curve: Curves.easeOut,
@@ -158,18 +174,21 @@ class _BookingSearchScreenState extends State<BookingSearchScreen> {
               onAdultsChanged: (v) => setState(() => _adults = v),
               onChildrenChanged: (v) => setState(() => _children = v),
               onFilterChanged: (v) => setState(() => _filter = v),
-              onCheckInChanged: (d) => setState(() {
-                _checkIn = d;
-                if (_checkOut.isBefore(_checkIn)) {
-                  _checkOut = _checkIn.add(const Duration(days: 1));
-                }
-              }),
+              onCheckInChanged: (d) {
+                setState(() {
+                  _checkIn = d;
+                  if (_checkOut.isBefore(_checkIn)) {
+                    _checkOut = _checkIn.add(const Duration(days: 1));
+                  }
+                });
+              },
               onCheckOutChanged: (d) => setState(() => _checkOut = d),
               onPriceChanged: (v) => setState(() => _customPrice = v),
               onSearch: _performSearch,
             ),
           ),
 
+          // ------------------------ CONFIRM BUTTON ------------------------
           if (_isSelectingLocation)
             Positioned(
               bottom: 80.h,
@@ -180,24 +199,25 @@ class _BookingSearchScreenState extends State<BookingSearchScreen> {
                   onPressed: _confirmLocation,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF295CDB),
-                    padding: EdgeInsets.symmetric(horizontal: 48.w, vertical: 16.h),
+                    padding:
+                    EdgeInsets.symmetric(horizontal: 48.w, vertical: 16.h),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(24.r),
                     ),
-                    elevation: 8,
                   ),
                   child: Text(
-                    'Подтвердить',
+                    "Подтвердить",
                     style: TextStyle(
+                      color: Colors.white,
                       fontSize: 18.sp,
                       fontWeight: FontWeight.bold,
-                      color: Colors.white,
                     ),
                   ),
                 ),
               ),
             ),
 
+          // ------------------------ USER LOCATION BUTTON ------------------------
           if (!_isSelectingLocation)
             Positioned(
               right: 24.w,
@@ -205,15 +225,15 @@ class _BookingSearchScreenState extends State<BookingSearchScreen> {
               child: FloatingActionButton(
                 onPressed: _goToCurrentLocation,
                 backgroundColor: const Color(0xFF295CDB),
-                elevation: 8,
-                child: Icon(Icons.my_location, size: 24.sp, color: Colors.white),
+                child: Icon(Icons.my_location, color: Colors.white, size: 24.sp),
               ),
             ),
 
+          // ------------------------ NAV BAR ------------------------
           Positioned(
+            bottom: 0,
             left: 0,
             right: 0,
-            bottom: 0,
             child: BottomNavigationWidget(
               currentIndex: _currentIndex,
               onTap: (i) => setState(() => _currentIndex = i),
