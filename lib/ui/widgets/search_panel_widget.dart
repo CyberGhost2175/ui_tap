@@ -65,7 +65,7 @@ class SearchPanelWidget extends StatelessWidget {
           ),
           child: Padding(
             padding: EdgeInsets.only(
-                top: 40.h, left: 16.w, right: 16.w, bottom: 40.h),
+                top: 40.h, left: 16.w, right: 16.w, bottom: 20.h),
             child: SingleChildScrollView(
               physics: const BouncingScrollPhysics(),
               child: Column(
@@ -121,7 +121,7 @@ class SearchPanelWidget extends StatelessWidget {
                     child: ElevatedButton(
                       onPressed: onSearch,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF295CDB),
+                        backgroundColor: const Color(0xFF2853AF),
                         elevation: 3,
                         padding: EdgeInsets.symmetric(vertical: 14.h),
                         shape: RoundedRectangleBorder(
@@ -220,7 +220,7 @@ class SearchPanelWidget extends StatelessWidget {
             Row(
               children: [
                 Icon(Icons.calendar_today_rounded,
-                    size: 18.sp, color: const Color(0xFF295CDB)),
+                    size: 18.sp, color: const Color(0xFF2853AF)),
                 SizedBox(width: 8.w),
                 Text(
                   label,
@@ -296,18 +296,18 @@ class SearchPanelWidget extends StatelessWidget {
                           color: Colors.black87,
                         ),
                         leftChevronIcon: Icon(Icons.chevron_left,
-                            color: const Color(0xFF295CDB)),
+                            color: const Color(0xFF2853AF)),
                         rightChevronIcon: Icon(Icons.chevron_right,
-                            color: const Color(0xFF295CDB)),
+                            color: const Color(0xFF2853AF)),
                       ),
                       calendarStyle: CalendarStyle(
                         outsideDaysVisible: false,
                         todayDecoration: BoxDecoration(
-                          color: const Color(0xFF295CDB).withOpacity(0.2),
+                          color: const Color(0xFF2853AF).withOpacity(0.2),
                           shape: BoxShape.circle,
                         ),
                         selectedDecoration: const BoxDecoration(
-                          color: Color(0xFF295CDB),
+                          color: Color(0xFF2853AF),
                           shape: BoxShape.circle,
                         ),
                         selectedTextStyle: const TextStyle(
@@ -360,7 +360,7 @@ class SearchPanelWidget extends StatelessWidget {
                                 onCheckOutChanged(selectedDate);
                             },
                             style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF295CDB),
+                              backgroundColor: const Color(0xFF2853AF),
                               elevation: 0,
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(12.r),
@@ -409,7 +409,7 @@ class SearchPanelWidget extends StatelessWidget {
               _circleButton(
                 icon: Icons.remove,
                 background: const Color(0xFFEEF0F5),
-                iconColor: const Color(0xFF295CDB),
+                iconColor: const Color(0xFF2853AF),
                 onTap: () {
                   final min = allowZero ? 0 : 1;
                   if (value > min) onChanged(value - 1);
@@ -427,7 +427,7 @@ class SearchPanelWidget extends StatelessWidget {
               SizedBox(width: 18.w),
               _circleButton(
                 icon: Icons.add,
-                background: const Color(0xFF295CDB),
+                background: const Color(0xFF2853AF),
                 iconColor: Colors.white,
                 onTap: () => onChanged(value + 1),
               ),
@@ -559,7 +559,7 @@ class SearchPanelWidget extends StatelessWidget {
           prefixIcon: Padding(
             padding: EdgeInsets.only(left: 12.w, right: 8.w),
             child: Icon(Icons.wallet_outlined,
-                color: const Color(0xFF295CDB), size: 22.sp),
+                color: const Color(0xFF2853AF), size: 22.sp),
           ),
           prefixIconConstraints:
           const BoxConstraints(minWidth: 0, minHeight: 0),
