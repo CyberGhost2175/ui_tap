@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:go_router/go_router.dart';
 
 /// SettingsScreen - app settings and preferences
 /// Contains: Dark mode, Payment methods, Notifications, Language, Support, About
@@ -48,20 +49,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           SizedBox(height: 12.h),
 
-          // Divider
-          Divider(color: Colors.grey.shade200, height: 1),
-          SizedBox(height: 12.h),
 
           // Payment methods
-          _buildNavigationItem(
-            icon: Icons.credit_card_outlined,
-            title: 'Способ оплаты',
-            onTap: () {
-              // TODO: Navigate to payment methods screen
-              _showComingSoonDialog('Способы оплаты');
-            },
-          ),
-          SizedBox(height: 12.h),
+
 
           // Notifications
           _buildNavigationItem(
@@ -74,16 +64,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           SizedBox(height: 12.h),
 
-          // Support
-          _buildNavigationItem(
-            icon: Icons.help_outline,
-            title: 'Тех. Поддержка',
-            onTap: () {
-              // TODO: Navigate to support screen
-              _showComingSoonDialog('Техническая поддержка');
-            },
-          ),
-          SizedBox(height: 12.h),
+
 
           // Language
           _buildNavigationItem(
@@ -101,13 +82,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
           Divider(color: Colors.grey.shade200, height: 1),
           SizedBox(height: 12.h),
 
-          // About
+          // About - navigates to AboutScreen
           _buildNavigationItem(
             icon: Icons.info_outline,
             title: 'О нас',
             onTap: () {
-              // TODO: Navigate to about screen
-              _showComingSoonDialog('О приложении');
+              context.push('/about'); // Navigate using GoRouter
             },
           ),
           SizedBox(height: 40.h),
@@ -402,9 +382,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           TextButton(
             onPressed: () {
-              // TODO: Implement logout logic
               Navigator.pop(context);
-              // Navigate to login screen
+              // Navigate to login screen using GoRouter
+              context.go('/login');
             },
             child: Text(
               'Выйти',

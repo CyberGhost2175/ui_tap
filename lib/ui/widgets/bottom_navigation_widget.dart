@@ -12,13 +12,13 @@ class BottomNavigationWidget extends StatelessWidget {
     required this.onTap,
   }) : super(key: key);
 
-  static const Color primary = Color(0xFF2853AF); // 🔥 Новый цвет
-
   @override
   Widget build(BuildContext context) {
     return SafeArea(
       top: false,
-      bottom: true,
+      left: false,
+      right: false,
+      bottom: true, // чтобы не пересекаться с home bar на iPhone
       child: Container(
         height: 64.h,
         decoration: BoxDecoration(
@@ -66,42 +66,43 @@ class BottomNavigationWidget extends StatelessWidget {
     return InkWell(
       onTap: () => onTap(index),
       child: Container(
-        width: 70.w,
+        width: 65.w, // ширина всей кнопки
         padding: EdgeInsets.only(top: 4.h),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            /// 🔵 Линия сверху — НОВЫЙ ЦВЕТ
+            // ===== BLUE INDICATOR (full width) =====
             AnimatedContainer(
               duration: const Duration(milliseconds: 200),
               height: 3.h,
               width: isSelected ? 70.w : 0,
               decoration: BoxDecoration(
-                color: isSelected ? primary : Colors.transparent,
+                color: isSelected ? const Color(0xFF295CDB) : Colors.transparent,
                 borderRadius: BorderRadius.circular(20),
               ),
             ),
 
             SizedBox(height: 10.h),
 
-            /// 🔵 Иконка — НОВЫЙ ЦВЕТ
+            // ===== ICON =====
             SvgPicture.asset(
               iconPath,
               height: 26.h,
               width: 26.w,
-              color: isSelected ? primary : Colors.grey.shade400,
+              color: isSelected ? const Color(0xFF295CDB) : Colors.grey.shade400,
             ),
 
             SizedBox(height: 2.h),
 
-            /// 🔵 Текст — НОВЫЙ ЦВЕТ
+            // ===== LABEL =====
             Text(
               label,
               style: TextStyle(
                 fontSize: 10.5.sp,
                 fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-                color: isSelected ? primary : Colors.grey.shade400,
+                color: isSelected ? const Color(0xFF295CDB) : Colors.grey.shade400,
               ),
+              maxLines: 1,
             ),
           ],
         ),

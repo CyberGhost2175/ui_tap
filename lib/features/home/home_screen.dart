@@ -200,7 +200,7 @@ class _BookingSearchScreenState extends State<BookingSearchScreen> {
         if (!_isSelectingLocation)
           Positioned(
             right: 24.w,
-            bottom: 88.h,
+            bottom: 30.h,
             child: GestureDetector(
               onTap: _goToCurrentLocation,
               child: Container(

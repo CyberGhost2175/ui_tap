@@ -8,32 +8,40 @@ import 'features/splash/splash_screen.dart';
 import 'features/auth/login_screen.dart';
 import 'features/auth/register_screen.dart';
 import 'features/home/home_screen.dart';
+import 'features/settings/about_screen.dart';
+import 'features/profile/profile_screen.dart'; // New screen
 
 // --------------------
-// Router Configuration
+// Routes initialization
 // --------------------
 final GoRouter appRouter = GoRouter(
   initialLocation: '/splash',
   routes: [
     GoRoute(
       path: '/splash',
-      name: 'splash',
       builder: (context, state) => const SplashScreen(),
     ),
     GoRoute(
       path: '/login',
-      name: 'login',
       builder: (context, state) => const LoginScreen(),
     ),
     GoRoute(
       path: '/register',
-      name: 'register',
       builder: (context, state) => const RegisterScreen(),
     ),
     GoRoute(
       path: '/home',
-      name: 'home',
       builder: (context, state) => const BookingSearchScreen(),
+    ),
+    // About Screen route
+    GoRoute(
+      path: '/about',
+      builder: (context, state) => const AboutScreen(),
+    ),
+    // Profile Screen route
+    GoRoute(
+      path: '/profile',
+      builder: (context, state) => const ProfileScreen(),
     ),
   ],
 );
@@ -55,14 +63,11 @@ class UiTapApp extends StatelessWidget {
         return MaterialApp.router(
           title: 'Ui Tap',
           debugShowCheckedModeBanner: false,
-          routerConfig: appRouter,
+          routerConfig: appRouter, // GoRouter configuration
           theme: ThemeData(
             primaryColor: const Color(0xFF295CDB),
             scaffoldBackgroundColor: Colors.white,
-            colorScheme: ColorScheme.fromSeed(
-              seedColor: const Color(0xFF295CDB),
-              primary: const Color(0xFF295CDB),
-            ),
+            fontFamily: 'SF Pro Display', // Custom font if available
           ),
           localizationsDelegates: const [
             GlobalMaterialLocalizations.delegate,
@@ -71,7 +76,7 @@ class UiTapApp extends StatelessWidget {
           ],
           supportedLocales: const [
             Locale('ru', 'RU'),
-            Locale('kk', 'KZ'),
+            Locale('kk', 'KZ'), // Kazakh
             Locale('en', 'US'),
           ],
           locale: const Locale('ru', 'RU'),
