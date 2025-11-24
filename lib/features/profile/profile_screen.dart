@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:go_router/go_router.dart';
+import '../../data/models/user/user_model.dart';
+import '../../data/services/token_storage.dart';
 
-/// ProfileScreen - user profile with editable fields
-/// Features: Inline editing, Edit mode toggle, Save changes
+/// ProfileScreen - user profile with real data from storage
+/// Features: Load user data, Inline editing, Edit mode toggle, Save changes, Logout
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({Key? key}) : super(key: key);
 
@@ -13,12 +16,28 @@ class ProfileScreen extends StatefulWidget {
 class _ProfileScreenState extends State<ProfileScreen> {
   // Edit mode state
   bool _isEditMode = false;
+  bool _isLoading = true;
+
+  // User data
+  UserModel? _user;
+
+  // Original values (for reset on cancel)
+  String _originalFirstName = '';
+  String _originalLastName = '';
+  String _originalEmail = '';
+  String _originalPhone = '';
 
   // Text controllers for editable fields
-  final TextEditingController _firstNameController = TextEditingController(text: 'Victor');
-  final TextEditingController _lastNameController = TextEditingController(text: 'Pin');
-  final TextEditingController _emailController = TextEditingController(text: 'PinVic@mail.ru');
-  final TextEditingController _phoneController = TextEditingController(text: '+7 777 777 77 77');
+  final TextEditingController _firstNameController = TextEditingController();
+  final TextEditingController _lastNameController = TextEditingController();
+  final TextEditingController _emailController = TextEditingController();
+  final TextEditingController _phoneController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _loadUserData();
+  }
 
   @override
   void dispose() {
@@ -29,6 +48,55 @@ class _ProfileScreenState extends State<ProfileScreen> {
     super.dispose();
   }
 
+  /// Load user data from storage
+  Future<void> _loadUserData() async {
+    setState(() => _isLoading = true);
+
+    try {
+      // Check if user is logged in
+      final isLoggedIn = await TokenStorage.isLoggedIn();
+
+      if (!isLoggedIn) {
+        // Token expired or no token - redirect to login
+        if (mounted) {
+          context.go('/login');
+        }
+        return;
+      }
+
+      // Get user data from storage
+      final userData = await TokenStorage.getUserData();
+      _user = UserModel.fromStorage(userData);
+
+      // Set controllers with user data
+      _firstNameController.text = _user?.firstName ?? '';
+      _lastNameController.text = _user?.lastName ?? '';
+      _emailController.text = _user?.email ?? '';
+      _phoneController.text = _user?.phone ?? '';
+
+      // Save original values
+      _originalFirstName = _firstNameController.text;
+      _originalLastName = _lastNameController.text;
+      _originalEmail = _emailController.text;
+      _originalPhone = _phoneController.text;
+    } catch (e) {
+      print('Error loading user data: $e');
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Ошибка загрузки данных: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
   /// Toggle edit mode
   void _toggleEditMode() {
     setState(() {
@@ -36,36 +104,104 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
       // If exiting edit mode without saving, reset values
       if (!_isEditMode) {
-        _firstNameController.text = 'Victor';
-        _lastNameController.text = 'Pin';
-        _emailController.text = 'PinVic@mail.ru';
-        _phoneController.text = '+7 777 777 77 77';
+        _firstNameController.text = _originalFirstName;
+        _lastNameController.text = _originalLastName;
+        _emailController.text = _originalEmail;
+        _phoneController.text = _originalPhone;
       }
     });
   }
 
   /// Save changes
-  void _saveChanges() {
-    // TODO: Implement save logic to backend
-    setState(() {
-      _isEditMode = false;
-    });
+  Future<void> _saveChanges() async {
+    try {
+      // Save updated user data to storage
+      await TokenStorage.saveUserData(
+        email: _emailController.text.trim(),
+        firstName: _firstNameController.text.trim(),
+        lastName: _lastNameController.text.trim(),
+        phone: _phoneController.text.trim(),
+        username: _user?.username,
+      );
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: const Text('Данные успешно сохранены'),
-        backgroundColor: Colors.green,
-        behavior: SnackBarBehavior.floating,
+      // Update original values
+      _originalFirstName = _firstNameController.text;
+      _originalLastName = _lastNameController.text;
+      _originalEmail = _emailController.text;
+      _originalPhone = _phoneController.text;
+
+      setState(() {
+        _isEditMode = false;
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Данные успешно сохранены'),
+            backgroundColor: Colors.green,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8.r),
+            ),
+            margin: EdgeInsets.only(
+              bottom: 80.h,
+              left: 20.w,
+              right: 20.w,
+            ),
+          ),
+        );
+      }
+
+      // TODO: Also send updated data to backend API
+      // await _authRepository.updateProfile(...)
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Ошибка сохранения: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  /// Logout user
+  Future<void> _logout() async {
+    // Show confirmation dialog
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(8.r),
+          borderRadius: BorderRadius.circular(16.r),
         ),
-        margin: EdgeInsets.only(
-          bottom: 80.h,
-          left: 20.w,
-          right: 20.w,
-        ),
+        title: const Text('Выход'),
+        content: const Text('Вы уверены, что хотите выйти?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Отмена'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(
+              foregroundColor: Colors.red,
+            ),
+            child: const Text('Выйти'),
+          ),
+        ],
       ),
     );
+
+    if (confirm == true) {
+      // Clear all stored data
+      await TokenStorage.clearAll();
+
+      if (mounted) {
+        // Navigate to login
+        context.go('/login');
+      }
+    }
   }
 
   @override
@@ -76,7 +212,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
         backgroundColor: Colors.white,
         elevation: 0,
         centerTitle: true,
-
         title: Text(
           'Профиль',
           style: TextStyle(
@@ -85,8 +220,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
             color: const Color(0xFF1A1A1A),
           ),
         ),
+        actions: [
+          // Logout button
+          IconButton(
+            icon: Icon(
+              Icons.logout,
+              color: Colors.red.shade400,
+              size: 24.sp,
+            ),
+            onPressed: _logout,
+          ),
+        ],
       ),
-      body: Stack(
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : Stack(
         children: [
           // Main content
           SingleChildScrollView(
@@ -94,7 +242,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               left: 20.w,
               right: 20.w,
               top: 20.h,
-              bottom: _isEditMode ? 100.h : 20.h, // Extra padding when save button visible
+              bottom: _isEditMode ? 100.h : 20.h,
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -139,12 +287,26 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   controller: _phoneController,
                 ),
 
-                SizedBox(height: 80.h), // Extra space for save button
+                SizedBox(height: 20.h),
+
+                // Username (read-only)
+                if (_user?.username != null) ...[
+                  _buildReadOnlyField(
+                    label: 'Имя пользователя',
+                    value: _user!.username!,
+                  ),
+                  SizedBox(height: 20.h),
+                ],
+
+                // Token expiration info - СКРЫТО
+                // _buildTokenExpirationInfo(),
+
+                SizedBox(height: 80.h),
               ],
             ),
           ),
 
-          // Save button (appears at bottom when in edit mode)
+          // Save button
           if (_isEditMode)
             Positioned(
               bottom: 0,
@@ -180,12 +342,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
           height: 80.w,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            color: Colors.grey.shade200,
-            image: const DecorationImage(
-              image: NetworkImage(
-                'https://images.rawpixel.com/image_png_800/cHJpdmF0ZS9sci9pbWFnZXMvd2Vic2l0ZS8yMDIzLTAxL3JtNjA5LXNvbGlkaWNvbi13LTAwMi1wLnBuZw.png',
+            color: const Color(0xFF295CDB).withOpacity(0.1),
+          ),
+          child: Center(
+            child: Text(
+              _getInitials(),
+              style: TextStyle(
+                fontSize: 32.sp,
+                fontWeight: FontWeight.w600,
+                color: const Color(0xFF295CDB),
               ),
-              fit: BoxFit.cover,
             ),
           ),
         ),
@@ -203,7 +369,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   fontSize: 20.sp,
                   fontWeight: FontWeight.w600,
                   color: const Color(0xFF1A1A1A),
-                  fontStyle: FontStyle.italic,
                 ),
               ),
               SizedBox(height: 4.h),
@@ -242,6 +407,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  /// Get user initials for avatar
+  String _getInitials() {
+    final firstName = _firstNameController.text;
+    final lastName = _lastNameController.text;
+
+    if (firstName.isEmpty && lastName.isEmpty) return '?';
+
+    return '${firstName.isNotEmpty ? firstName[0] : ''}${lastName.isNotEmpty ? lastName[0] : ''}'.toUpperCase();
+  }
+
   /// Editable field with label
   Widget _buildEditableField({
     required String label,
@@ -250,7 +425,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Label
         Text(
           label,
           style: TextStyle(
@@ -259,10 +433,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             color: const Color(0xFF1A1A1A),
           ),
         ),
-
         SizedBox(height: 8.h),
-
-        // Input field
         Container(
           decoration: BoxDecoration(
             color: _isEditMode ? Colors.white : const Color(0xFFF6F6F6),
@@ -296,6 +467,105 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
         ),
       ],
+    );
+  }
+
+  /// Read-only field
+  Widget _buildReadOnlyField({
+    required String label,
+    required String value,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 16.sp,
+            fontWeight: FontWeight.w600,
+            color: const Color(0xFF1A1A1A),
+          ),
+        ),
+        SizedBox(height: 8.h),
+        Container(
+          padding: EdgeInsets.symmetric(horizontal: 16.w, vertical: 14.h),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF6F6F6),
+            borderRadius: BorderRadius.circular(12.r),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  value,
+                  style: TextStyle(
+                    fontSize: 16.sp,
+                    fontWeight: FontWeight.w400,
+                    color: Colors.grey.shade600,
+                  ),
+                ),
+              ),
+              Icon(
+                Icons.lock_outline,
+                size: 20.sp,
+                color: Colors.grey.shade400,
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Token expiration info
+  Widget _buildTokenExpirationInfo() {
+    return FutureBuilder<int?>(
+      future: TokenStorage.getTimeUntilExpiration(),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData || snapshot.data == null) {
+          return const SizedBox.shrink();
+        }
+
+        final seconds = snapshot.data!;
+        final minutes = (seconds / 60).floor();
+        final hours = (minutes / 60).floor();
+
+        String timeText;
+        if (hours > 0) {
+          timeText = 'Токен истечет через $hours ч';
+        } else if (minutes > 0) {
+          timeText = 'Токен истечет через $minutes мин';
+        } else {
+          timeText = 'Токен истек';
+        }
+
+        return Container(
+          padding: EdgeInsets.all(12.w),
+          decoration: BoxDecoration(
+            color: hours < 1 ? Colors.red.shade50 : Colors.blue.shade50,
+            borderRadius: BorderRadius.circular(8.r),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                hours < 1 ? Icons.warning_amber : Icons.info_outline,
+                size: 20.sp,
+                color: hours < 1 ? Colors.red.shade600 : Colors.blue.shade600,
+              ),
+              SizedBox(width: 8.w),
+              Expanded(
+                child: Text(
+                  timeText,
+                  style: TextStyle(
+                    fontSize: 14.sp,
+                    color: hours < 1 ? Colors.red.shade700 : Colors.blue.shade700,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 

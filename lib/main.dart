@@ -1,50 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
-import 'package:go_router/go_router.dart';
-
-// Screens
-import 'features/splash/splash_screen.dart';
-import 'features/auth/login_screen.dart';
-import 'features/auth/register_screen.dart';
-import 'features/home/home_screen.dart';
-import 'features/settings/about_screen.dart';
-import 'features/profile/profile_screen.dart'; // New screen
-
-// --------------------
-// Routes initialization
-// --------------------
-final GoRouter appRouter = GoRouter(
-  initialLocation: '/splash',
-  routes: [
-    GoRoute(
-      path: '/splash',
-      builder: (context, state) => const SplashScreen(),
-    ),
-    GoRoute(
-      path: '/login',
-      builder: (context, state) => const LoginScreen(),
-    ),
-    GoRoute(
-      path: '/register',
-      builder: (context, state) => const RegisterScreen(),
-    ),
-    GoRoute(
-      path: '/home',
-      builder: (context, state) => const BookingSearchScreen(),
-    ),
-    // About Screen route
-    GoRoute(
-      path: '/about',
-      builder: (context, state) => const AboutScreen(),
-    ),
-    // Profile Screen route
-    GoRoute(
-      path: '/profile',
-      builder: (context, state) => const ProfileScreen(),
-    ),
-  ],
-);
+import 'core/navigation/app_router.dart';
 
 void main() {
   runApp(const UiTapApp());
@@ -56,30 +13,36 @@ class UiTapApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ScreenUtilInit(
-      designSize: const Size(390, 844),
+      designSize: const Size(375, 812), // iPhone X size
       minTextAdapt: true,
       splitScreenMode: true,
       builder: (context, child) {
         return MaterialApp.router(
-          title: 'Ui Tap',
+          title: 'UI Tap',
           debugShowCheckedModeBanner: false,
-          routerConfig: appRouter, // GoRouter configuration
-          theme: ThemeData(
-            primaryColor: const Color(0xFF295CDB),
-            scaffoldBackgroundColor: Colors.white,
-            fontFamily: 'SF Pro Display', // Custom font if available
-          ),
+
+          // 🔧 FIX: Add localizations
           localizationsDelegates: const [
             GlobalMaterialLocalizations.delegate,
             GlobalWidgetsLocalizations.delegate,
             GlobalCupertinoLocalizations.delegate,
           ],
           supportedLocales: const [
-            Locale('ru', 'RU'),
-            Locale('kk', 'KZ'), // Kazakh
-            Locale('en', 'US'),
+            Locale('en', ''), // English
+            Locale('ru', ''), // Russian
+            Locale('kk', ''), // Kazakh
           ],
-          locale: const Locale('ru', 'RU'),
+
+          theme: ThemeData(
+            primaryColor: const Color(0xFF295CDB),
+            scaffoldBackgroundColor: Colors.white,
+            fontFamily: 'SF Pro Display', // Or your custom font
+            colorScheme: ColorScheme.fromSeed(
+              seedColor: const Color(0xFF295CDB),
+            ),
+            useMaterial3: true,
+          ),
+          routerConfig: AppRouter.router,
         );
       },
     );
