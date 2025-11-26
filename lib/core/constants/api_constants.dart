@@ -31,6 +31,9 @@ class ApiConstants {
   static const String registerEndpoint = '/auth/client/register';
   static const String loginEndpoint = '/auth/login'; // ✅ БЕЗ /client!
 
+  // User endpoints
+  static const String currentUserEndpoint = '/users/me'; // GET current user data
+
   // Timeouts
   static const Duration connectionTimeout = Duration(seconds: 30);
   static const Duration receiveTimeout = Duration(seconds: 30);

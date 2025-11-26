@@ -5,6 +5,7 @@ import '../models/auth/register_request.dart';
 import '../models/auth/register_response.dart';
 import '../models/auth/login_request.dart';
 import '../models/auth/login_response.dart';
+import '../models/user/user_response.dart';
 
 /// Service for authentication API calls
 class AuthApiService {
@@ -142,6 +143,71 @@ class AuthApiService {
       else {
         print('❌ Error ${response.statusCode}: ${response.body}');
         throw Exception('Ошибка входа: ${response.statusCode}');
+      }
+    } catch (e) {
+      print('❌ Exception caught: $e');
+      if (e is Exception) {
+        rethrow;
+      }
+      throw Exception('Ошибка подключения к серверу');
+    }
+  }
+
+  /// Get current user data
+  ///
+  /// Requires: Authorization Bearer token
+  /// Returns [UserResponse] on success (200)
+  /// Throws [Exception] on error (401, 403, 500)
+  Future<UserResponse> getCurrentUser(String accessToken) async {
+    try {
+      final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.currentUserEndpoint}');
+
+      // 🔍 DEBUG: Log request details
+      print('📤 Get Current User Request:');
+      print('URL: $url');
+      print('Authorization: Bearer ${accessToken.substring(0, 20)}...');
+
+      final response = await http
+          .get(
+        url,
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': '*/*',
+          'Authorization': 'Bearer $accessToken',
+        },
+      )
+          .timeout(ApiConstants.connectionTimeout);
+
+      // 🔍 DEBUG: Log response details
+      print('📥 Server Response:');
+      print('Status Code: ${response.statusCode}');
+      print('Response Body: ${response.body}');
+
+      // Success - got user data
+      if (response.statusCode == 200) {
+        final Map<String, dynamic> jsonResponse = jsonDecode(response.body);
+        print('✅ User data loaded successfully');
+        return UserResponse.fromJson(jsonResponse);
+      }
+      // Unauthorized - token invalid or expired
+      else if (response.statusCode == 401) {
+        print('❌ Error 401: Unauthorized - token invalid or expired');
+        throw Exception('Токен недействителен или истек');
+      }
+      // Forbidden
+      else if (response.statusCode == 403) {
+        print('❌ Error 403: Forbidden');
+        throw Exception('Доступ запрещен');
+      }
+      // Server error
+      else if (response.statusCode == 500) {
+        print('❌ Error 500: Internal server error');
+        throw Exception('Ошибка сервера. Попробуйте позже');
+      }
+      // Other errors
+      else {
+        print('❌ Error ${response.statusCode}: ${response.body}');
+        throw Exception('Ошибка загрузки данных: ${response.statusCode}');
       }
     } catch (e) {
       print('❌ Exception caught: $e');

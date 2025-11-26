@@ -7,12 +7,14 @@ class MapWidget extends StatefulWidget {
   final bool isSelectingLocation;
   final VoidCallback onMapDragStart;
   final VoidCallback onMapDragEnd;
+  final Function(double lat, double lng)? onLocationChanged; // NEW: callback for location updates
 
   const MapWidget({
     Key? key,
     required this.isSelectingLocation,
     required this.onMapDragStart,
     required this.onMapDragEnd,
+    this.onLocationChanged,
   }) : super(key: key);
 
   @override
@@ -37,7 +39,11 @@ class MapWidgetState extends State<MapWidget> {
     bool enabled = await Geolocator.isLocationServiceEnabled();
     if (!enabled) return;
 
-    LocationPermission p = await Geolocator.requestPermission();
+    LocationPermission p = await Geolocator.checkPermission();
+    if (p == LocationPermission.denied) {
+      p = await Geolocator.requestPermission();
+    }
+
     if (p == LocationPermission.denied ||
         p == LocationPermission.deniedForever) return;
 
@@ -51,6 +57,9 @@ class MapWidgetState extends State<MapWidget> {
 
     /// 🔥 Двигаем карту на текущее местоположение (zoom = 16)
     _mapController.move(_gpsLocation!, 16);
+
+    // Notify about initial location
+    widget.onLocationChanged?.call(_center.latitude, _center.longitude);
   }
 
   /// Нажатие на кнопку "моё местоположение"
@@ -63,12 +72,20 @@ class MapWidgetState extends State<MapWidget> {
       _center = _gpsLocation!;
       _mapController.move(_gpsLocation!, 16);
       setState(() {});
+
+      // Notify about location change
+      widget.onLocationChanged?.call(_center.latitude, _center.longitude);
     }
   }
 
   /// Подтверждение выбранной точки
   void confirmLocation() {
     debugPrint("CONFIRMED LOCATION: $_center");
+  }
+
+  /// Get current center coordinates
+  LatLng getCurrentCenter() {
+    return _center;
   }
 
   @override
@@ -92,6 +109,10 @@ class MapWidgetState extends State<MapWidget> {
                 setState(() {
                   _center = event.camera.center;
                 });
+
+                // 🔥 NEW: Notify about location change when map stops moving
+                widget.onLocationChanged?.call(_center.latitude, _center.longitude);
+
                 widget.onMapDragEnd();
               }
             },

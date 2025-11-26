@@ -2,7 +2,9 @@ import '../models/auth/register_request.dart';
 import '../models/auth/register_response.dart';
 import '../models/auth/login_request.dart';
 import '../models/auth/login_response.dart';
+import '../models/user/user_response.dart';
 import '../services/auth_api_service.dart';
+import '../services/token_storage.dart';
 
 /// Repository for authentication operations
 /// Implements business logic and error handling
@@ -75,5 +77,28 @@ class AuthRepository {
     // Example:
     // final prefs = await SharedPreferences.getInstance();
     // await prefs.setString('access_token', token);
+  }
+
+  /// Get current user data from backend
+  ///
+  /// Returns [UserResponse] with user data on success (200)
+  /// Returns error message on failure (401, 403, 500)
+  Future<({UserResponse? response, String? error})> getCurrentUser() async {
+    try {
+      // Get access token from storage
+      final accessToken = await TokenStorage.getAccessToken();
+
+      if (accessToken == null) {
+        return (response: null, error: 'Токен не найден');
+      }
+
+      final response = await _apiService.getCurrentUser(accessToken);
+
+      return (response: response, error: null);
+    } on Exception catch (e) {
+      return (response: null, error: e.toString().replaceAll('Exception: ', ''));
+    } catch (e) {
+      return (response: null, error: 'Неизвестная ошибка');
+    }
   }
 }

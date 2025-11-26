@@ -2,10 +2,53 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:intl/intl.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
 import '../../features/home/home_screen.dart';
 import 'package:table_calendar/table_calendar.dart';
+import '../../data/services/token_storage.dart'; // Import TokenStorage
 
-class SearchPanelWidget extends StatelessWidget {
+/// District model from API
+class District {
+  final int id;
+  final String name;
+  final int? cityId;
+
+  District({
+    required this.id,
+    required this.name,
+    this.cityId,
+  });
+
+  factory District.fromJson(Map<String, dynamic> json) {
+    return District(
+      id: json['id'] as int,
+      name: json['name'] as String,
+      cityId: json['cityId'] as int?,
+    );
+  }
+}
+
+/// City model
+class City {
+  final int id;
+  final String name;
+
+  const City({
+    required this.id,
+    required this.name,
+  });
+}
+
+/// Available cities
+class Cities {
+  static const almaty = City(id: 1, name: 'Алматы');
+  static const astana = City(id: 2, name: 'Астана');
+
+  static List<City> get all => [almaty, astana];
+}
+
+class SearchPanelWidget extends StatefulWidget {
   final PanelState panelState;
   final int adults;
   final int children;
@@ -45,12 +88,130 @@ class SearchPanelWidget extends StatelessWidget {
   }) : super(key: key);
 
   @override
+  State<SearchPanelWidget> createState() => SearchPanelWidgetState();
+}
+
+class SearchPanelWidgetState extends State<SearchPanelWidget> {
+  // API Configuration
+  static const String baseUrl = 'http://63.178.189.113:8888/api';
+
+  int? _selectedCityId;
+  String _selectedCityName = '';
+  int? _selectedDistrictId;
+  String _selectedDistrictName = '';
+
+  List<District> _availableDistricts = [];
+  bool _isLoadingDistricts = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Set default city to Almaty
+    _selectedCityId = 1;
+    _selectedCityName = 'Алматы';
+    // Load districts for default city
+    _loadDistricts(1);
+  }
+
+  /// Get access token from TokenStorage (SharedPreferences)
+  Future<String?> _getAccessToken() async {
+    try {
+      // Use TokenStorage to get token from SharedPreferences
+      final token = await TokenStorage.getAccessToken();
+
+      if (token != null && token.isNotEmpty) {
+        debugPrint('🔑 Token found in SharedPreferences');
+        debugPrint('🔑 Token preview: ${token.substring(0, token.length > 20 ? 20 : token.length)}...');
+
+        // Check if token is expired
+        final isExpired = await TokenStorage.isTokenExpired();
+        if (isExpired) {
+          debugPrint('⚠️ Token is expired! User needs to re-login.');
+          return null;
+        }
+
+        return token;
+      } else {
+        debugPrint('⚠️ No token found in SharedPreferences');
+        debugPrint('📋 User needs to login first');
+        return null;
+      }
+    } catch (e) {
+      debugPrint('❌ Error reading token from TokenStorage: $e');
+      return null;
+    }
+  }
+
+  /// Load districts from API
+  Future<void> _loadDistricts(int cityId) async {
+    setState(() => _isLoadingDistricts = true);
+
+    try {
+      // Get token from storage
+      final token = await _getAccessToken();
+
+      if (token == null) {
+        debugPrint('❌ Cannot load districts: No access token');
+        setState(() {
+          _availableDistricts = [];
+          _isLoadingDistricts = false;
+        });
+        return;
+      }
+
+      final response = await http.get(
+        Uri.parse('$baseUrl/districts/by-city/$cityId'),
+        headers: {
+          'accept': '*/*',
+          'Authorization': 'Bearer $token',
+        },
+      );
+
+      if (response.statusCode == 200) {
+        final List<dynamic> data = json.decode(utf8.decode(response.bodyBytes));
+        final districts = data.map((json) => District.fromJson(json)).toList();
+
+        setState(() {
+          _availableDistricts = districts;
+          _isLoadingDistricts = false;
+
+          // Auto-select first district if available
+          if (districts.isNotEmpty) {
+            _selectedDistrictId = districts[0].id;
+            _selectedDistrictName = districts[0].name;
+          } else {
+            _selectedDistrictId = null;
+            _selectedDistrictName = '';
+          }
+        });
+
+        debugPrint('✅ Loaded ${districts.length} districts for city $cityId');
+      } else {
+        debugPrint('❌ Failed to load districts: ${response.statusCode}');
+        if (response.statusCode == 401) {
+          debugPrint('⚠️ Token expired or invalid. Please re-login.');
+        }
+        setState(() {
+          _availableDistricts = [];
+          _isLoadingDistricts = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('❌ Error loading districts: $e');
+      setState(() {
+        _availableDistricts = [];
+        _isLoadingDistricts = false;
+      });
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final isCollapsed = panelState == PanelState.collapsed;
+    final isCollapsed = widget.panelState == PanelState.collapsed;
 
     return Stack(
       children: [
-        // Основная панель
+        // Main panel
         Container(
           decoration: BoxDecoration(
             color: Colors.white,
@@ -71,7 +232,7 @@ class SearchPanelWidget extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Заголовок
+                  // Header
                   Stack(
                     alignment: Alignment.center,
                     children: [
@@ -90,7 +251,7 @@ class SearchPanelWidget extends StatelessWidget {
                           right: 0,
                           child: IconButton(
                             splashRadius: 20.r,
-                            onPressed: onCloseTap,
+                            onPressed: widget.onCloseTap,
                             icon: Icon(
                               Icons.close_rounded,
                               size: 22.sp,
@@ -104,10 +265,18 @@ class SearchPanelWidget extends StatelessWidget {
                   _buildDates(context),
 
                   if (!isCollapsed) ...[
-                    SizedBox(height: 22.h),
-                    _buildCounter('Взрослые', adults, onAdultsChanged, false),
-                    _buildCounter('Дети', children, onChildrenChanged, true),
-                    SizedBox(height: 14.h),
+                    SizedBox(height: 18.h),
+                    _buildCounter('Кол-во гостей', widget.adults, widget.onAdultsChanged, false),
+                    SizedBox(height: 18.h),
+
+                    // City dropdown
+                    _buildCityDropdown(context),
+                    SizedBox(height: 18.h),
+
+                    // District dropdown
+                    _buildDistrictDropdown(context),
+                    SizedBox(height: 12.h),
+
                     _buildFilter(),
                     SizedBox(height: 14.h),
                     _buildRecommendedPrice(),
@@ -119,7 +288,7 @@ class SearchPanelWidget extends StatelessWidget {
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton(
-                      onPressed: onSearch,
+                      onPressed: widget.onSearch,
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFF2853AF),
                         elevation: 3,
@@ -129,7 +298,7 @@ class SearchPanelWidget extends StatelessWidget {
                         ),
                       ),
                       child: Text(
-                        'Поиск',
+                        'Найти',
                         style: TextStyle(
                           fontSize: 16.sp,
                           fontWeight: FontWeight.bold,
@@ -144,12 +313,12 @@ class SearchPanelWidget extends StatelessWidget {
           ),
         ),
 
-        // Прозрачный слой для клика по всей панели в свернутом состоянии
+        // Transparent layer for tap on collapsed panel
         if (isCollapsed)
           Positioned.fill(
             child: GestureDetector(
               behavior: HitTestBehavior.translucent,
-              onTap: onPanelTap,
+              onTap: widget.onPanelTap,
               child: Container(color: Colors.transparent),
             ),
           ),
@@ -157,7 +326,7 @@ class SearchPanelWidget extends StatelessWidget {
     );
   }
 
-  // --- Выбор дат ---
+  // --- Date selection ---
   Widget _buildDates(BuildContext context) {
     final dateFormat = DateFormat('d MMM, yyyy', 'ru');
     return Column(
@@ -178,7 +347,7 @@ class SearchPanelWidget extends StatelessWidget {
               child: _dateCard(
                 context,
                 'Заезд',
-                dateFormat.format(checkIn),
+                dateFormat.format(widget.checkIn),
                     () => _selectDate(context, true),
               ),
             ),
@@ -187,7 +356,7 @@ class SearchPanelWidget extends StatelessWidget {
               child: _dateCard(
                 context,
                 'Выезд',
-                dateFormat.format(checkOut),
+                dateFormat.format(widget.checkOut),
                     () => _selectDate(context, false),
               ),
             ),
@@ -248,7 +417,7 @@ class SearchPanelWidget extends StatelessWidget {
   }
 
   Future<void> _selectDate(BuildContext context, bool isCheckIn) async {
-    DateTime selectedDate = isCheckIn ? checkIn : checkOut;
+    DateTime selectedDate = isCheckIn ? widget.checkIn : widget.checkOut;
 
     await showDialog(
       context: context,
@@ -274,7 +443,6 @@ class SearchPanelWidget extends StatelessWidget {
                 return Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    // --- Календарь ---
                     TableCalendar(
                       locale: 'ru_RU',
                       firstDay: DateTime.now(),
@@ -325,8 +493,6 @@ class SearchPanelWidget extends StatelessWidget {
                       ),
                     ),
                     SizedBox(height: 12.h),
-
-                    // --- Кнопки Отмена / Готово ---
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
@@ -355,9 +521,9 @@ class SearchPanelWidget extends StatelessWidget {
                             onPressed: () {
                               Navigator.pop(context);
                               if (isCheckIn)
-                                onCheckInChanged(selectedDate);
+                                widget.onCheckInChanged(selectedDate);
                               else
-                                onCheckOutChanged(selectedDate);
+                                widget.onCheckOutChanged(selectedDate);
                             },
                             style: ElevatedButton.styleFrom(
                               backgroundColor: const Color(0xFF2853AF),
@@ -387,12 +553,11 @@ class SearchPanelWidget extends StatelessWidget {
     );
   }
 
-
-  // --- Блок с людьми ---
+  // --- Counter ---
   Widget _buildCounter(
       String label, int value, Function(int) onChanged, bool allowZero) {
     return Padding(
-      padding: EdgeInsets.only(bottom: 14.h),
+      padding: EdgeInsets.only(bottom: 0.h),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
@@ -459,9 +624,286 @@ class SearchPanelWidget extends StatelessWidget {
     );
   }
 
-  // --- Фильтр ---
+  // --- City dropdown ---
+  Widget _buildCityDropdown(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text(
+              'Город',
+              style: TextStyle(
+                fontSize: 16.sp,
+                fontWeight: FontWeight.w600,
+                color: const Color(0xFF1A1A1A),
+              ),
+            ),
+          ],
+        ),
+        SizedBox(height: 10.h),
+        InkWell(
+          onTap: () => _showCityPicker(context),
+          borderRadius: BorderRadius.circular(12.r),
+          child: Container(
+            padding: EdgeInsets.symmetric(horizontal: 16.w, vertical: 16.h),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF6F6F6),
+              borderRadius: BorderRadius.circular(12.r),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  _selectedCityName.isEmpty ? 'Выберите город' : _selectedCityName,
+                  style: TextStyle(
+                    fontSize: 15.sp,
+                    fontWeight: FontWeight.w500,
+                    color: _selectedCityName.isEmpty
+                        ? Colors.grey.shade600
+                        : Colors.black87,
+                  ),
+                ),
+                Icon(Icons.keyboard_arrow_down,
+                    size: 24.sp, color: const Color(0xFF2853AF)),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  void _showCityPicker(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24.r)),
+          ),
+          padding: EdgeInsets.symmetric(vertical: 20.h, horizontal: 16.w),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 40.w,
+                height: 4.h,
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade300,
+                  borderRadius: BorderRadius.circular(2.r),
+                ),
+              ),
+              SizedBox(height: 20.h),
+              Text(
+                'Выберите город',
+                style: TextStyle(
+                  fontSize: 18.sp,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.black87,
+                ),
+              ),
+              SizedBox(height: 20.h),
+              ...Cities.all.map((city) {
+                final isSelected = _selectedCityId == city.id;
+                return ListTile(
+                  onTap: () {
+                    setState(() {
+                      _selectedCityId = city.id;
+                      _selectedCityName = city.name;
+                    });
+                    Navigator.pop(context);
+                    // Load districts for selected city
+                    _loadDistricts(city.id);
+                  },
+                  leading: Icon(
+                    isSelected
+                        ? Icons.radio_button_checked
+                        : Icons.radio_button_unchecked,
+                    color: const Color(0xFF2853AF),
+                  ),
+                  title: Text(
+                    city.name,
+                    style: TextStyle(
+                      fontSize: 16.sp,
+                      fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                      color: Colors.black87,
+                    ),
+                  ),
+                );
+              }).toList(),
+              SizedBox(height: 10.h),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  // --- District dropdown ---
+  Widget _buildDistrictDropdown(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text(
+              'Район',
+              style: TextStyle(
+                fontSize: 16.sp,
+                fontWeight: FontWeight.w600,
+                color: const Color(0xFF1A1A1A),
+              ),
+            ),
+          ],
+        ),
+        SizedBox(height: 10.h),
+        InkWell(
+          onTap: _isLoadingDistricts || _availableDistricts.isEmpty
+              ? null
+              : () => _showDistrictPicker(context),
+          borderRadius: BorderRadius.circular(12.r),
+          child: Container(
+            padding: EdgeInsets.symmetric(horizontal: 16.w, vertical: 16.h),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF6F6F6),
+              borderRadius: BorderRadius.circular(12.r),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Expanded(
+                  child: _isLoadingDistricts
+                      ? Row(
+                    children: [
+                      SizedBox(
+                        width: 16.w,
+                        height: 16.w,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            const Color(0xFF2853AF),
+                          ),
+                        ),
+                      ),
+                      SizedBox(width: 12.w),
+                      Text(
+                        'Загрузка районов...',
+                        style: TextStyle(
+                          fontSize: 15.sp,
+                          fontWeight: FontWeight.w500,
+                          color: Colors.grey.shade600,
+                        ),
+                      ),
+                    ],
+                  )
+                      : Text(
+                    _selectedDistrictName.isEmpty
+                        ? 'Выберите район'
+                        : _selectedDistrictName,
+                    style: TextStyle(
+                      fontSize: 15.sp,
+                      fontWeight: FontWeight.w500,
+                      color: _selectedDistrictName.isEmpty
+                          ? Colors.grey.shade600
+                          : Colors.black87,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                Icon(Icons.keyboard_arrow_down,
+                    size: 24.sp, color: const Color(0xFF2853AF)),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  void _showDistrictPicker(BuildContext context) {
+    if (_availableDistricts.isEmpty) return;
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (context) {
+        return Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24.r)),
+          ),
+          padding: EdgeInsets.symmetric(vertical: 20.h, horizontal: 16.w),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 40.w,
+                height: 4.h,
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade300,
+                  borderRadius: BorderRadius.circular(2.r),
+                ),
+              ),
+              SizedBox(height: 20.h),
+              Text(
+                'Выберите район',
+                style: TextStyle(
+                  fontSize: 18.sp,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.black87,
+                ),
+              ),
+              SizedBox(height: 20.h),
+              ConstrainedBox(
+                constraints: BoxConstraints(maxHeight: 400.h),
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: _availableDistricts.length,
+                  itemBuilder: (context, index) {
+                    final district = _availableDistricts[index];
+                    final isSelected = _selectedDistrictId == district.id;
+                    return ListTile(
+                      onTap: () {
+                        setState(() {
+                          _selectedDistrictId = district.id;
+                          _selectedDistrictName = district.name;
+                        });
+                        Navigator.pop(context);
+                      },
+                      leading: Icon(
+                        isSelected
+                            ? Icons.radio_button_checked
+                            : Icons.radio_button_unchecked,
+                        color: const Color(0xFF2853AF),
+                      ),
+                      title: Text(
+                        district.name,
+                        style: TextStyle(
+                          fontSize: 15.sp,
+                          fontWeight:
+                          isSelected ? FontWeight.w700 : FontWeight.w500,
+                          color: Colors.black87,
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+              SizedBox(height: 10.h),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  // --- Filter ---
   Widget _buildFilter() {
-    final items = ['Все', 'Отель', 'Квартира'];
+    final items = ['Отель', 'Квартира'];
     return Container(
       padding: EdgeInsets.all(6.w),
       decoration: BoxDecoration(
@@ -477,13 +919,13 @@ class SearchPanelWidget extends StatelessWidget {
       ),
       child: Row(
         children: items.map((i) {
-          final sel = (i == filter);
+          final sel = (i == widget.filter);
           return Expanded(
             child: GestureDetector(
-              onTap: () => onFilterChanged(i),
+              onTap: () => widget.onFilterChanged(i),
               behavior: HitTestBehavior.opaque,
               child: AnimatedContainer(
-                duration: const Duration(milliseconds: 0),
+                duration: const Duration(milliseconds: 200),
                 curve: Curves.easeInOut,
                 alignment: Alignment.center,
                 padding: EdgeInsets.symmetric(vertical: 10.h),
@@ -516,7 +958,7 @@ class SearchPanelWidget extends StatelessWidget {
     );
   }
 
-  // --- Цена ---
+  // --- Price ---
   Widget _buildRecommendedPrice() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -554,7 +996,7 @@ class SearchPanelWidget extends StatelessWidget {
       child: TextField(
         keyboardType: TextInputType.number,
         inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-        onChanged: onPriceChanged,
+        onChanged: widget.onPriceChanged,
         decoration: InputDecoration(
           prefixIcon: Padding(
             padding: EdgeInsets.only(left: 12.w, right: 8.w),
@@ -576,5 +1018,15 @@ class SearchPanelWidget extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  /// Get selected location data for search
+  Map<String, dynamic> getSelectedLocation() {
+    return {
+      'cityId': _selectedCityId,
+      'cityName': _selectedCityName.isEmpty ? null : _selectedCityName,
+      'districtId': _selectedDistrictId,
+      'districtName': _selectedDistrictName.isEmpty ? null : _selectedDistrictName,
+    };
   }
 }

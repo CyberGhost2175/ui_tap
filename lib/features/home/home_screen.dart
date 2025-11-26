@@ -33,13 +33,14 @@ class _BookingSearchScreenState extends State<BookingSearchScreen> {
   DateTime _checkOut = DateTime.now().add(const Duration(days: 6));
 
   final GlobalKey<MapWidgetState> _mapKey = GlobalKey<MapWidgetState>();
+  final GlobalKey<SearchPanelWidgetState> _searchPanelKey = GlobalKey<SearchPanelWidgetState>();
 
   double _getPanelHeight() {
     switch (_panelState) {
       case PanelState.collapsed:
         return 300.h;
       case PanelState.expanded:
-        return 0.75.sh;
+        return 0.95.sh;
       case PanelState.hidden:
         return 0;
     }
@@ -87,6 +88,9 @@ class _BookingSearchScreenState extends State<BookingSearchScreen> {
   Future<void> _performSearch() async {
     final pos = await _getUserPosition();
 
+    // Get selected location from search panel
+    final location = _searchPanelKey.currentState?.getSelectedLocation();
+
     final payload = {
       'adults': _adults,
       'children': _children,
@@ -94,6 +98,10 @@ class _BookingSearchScreenState extends State<BookingSearchScreen> {
       'checkIn': _checkIn.toIso8601String(),
       'checkOut': _checkOut.toIso8601String(),
       'customPrice': _customPrice.isEmpty ? null : int.tryParse(_customPrice),
+      'cityId': location?['cityId'],              // City ID from API
+      'cityName': location?['cityName'],          // City name
+      'districtId': location?['districtId'],      // District ID from API
+      'districtName': location?['districtName'],  // District name
       'userLocation': pos == null
           ? null
           : {
@@ -102,11 +110,11 @@ class _BookingSearchScreenState extends State<BookingSearchScreen> {
       },
     };
 
-    debugPrint("SEARCH PAYLOAD: $payload");
+    debugPrint("🔍 SEARCH PAYLOAD: $payload");
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: const Text('Поиск выполняется...'),
+        content: Text('Поиск: ${location?['cityName']}, ${location?['districtName']}'),
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(8.r),
@@ -142,6 +150,7 @@ class _BookingSearchScreenState extends State<BookingSearchScreen> {
           top: 0,
           height: _getPanelHeight(),
           child: SearchPanelWidget(
+            key: _searchPanelKey,
             panelState: _panelState,
             adults: _adults,
             children: _children,
@@ -196,8 +205,9 @@ class _BookingSearchScreenState extends State<BookingSearchScreen> {
             ),
           ),
 
-        // ------------------------ USER LOCATION BUTTON (SVG ICON) ------------------------
-        if (!_isSelectingLocation)
+        // ------------------------ USER LOCATION BUTTON ------------------------
+        // Only show when panel is collapsed (not expanded and not selecting location)
+        if (_panelState == PanelState.collapsed && !_isSelectingLocation)
           Positioned(
             right: 24.w,
             bottom: 30.h,
@@ -213,7 +223,7 @@ class _BookingSearchScreenState extends State<BookingSearchScreen> {
                     BoxShadow(
                       color: Colors.black.withOpacity(0.15),
                       blurRadius: 10,
-                      offset: Offset(0, 4),
+                      offset: const Offset(0, 4),
                     ),
                   ],
                 ),

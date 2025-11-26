@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:go_router/go_router.dart';
 import '../../data/models/user/user_model.dart';
+import '../../data/repositories/auth_repository.dart';
 import '../../data/services/token_storage.dart';
 
 /// ProfileScreen - user profile with real data from storage
@@ -20,6 +21,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   // User data
   UserModel? _user;
+
+  // Repository
+  final AuthRepository _authRepository = AuthRepository();
 
   // Original values (for reset on cancel)
   String _originalFirstName = '';
@@ -48,7 +52,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     super.dispose();
   }
 
-  /// Load user data from storage
+  /// Load user data from API
   Future<void> _loadUserData() async {
     setState(() => _isLoading = true);
 
@@ -64,9 +68,68 @@ class _ProfileScreenState extends State<ProfileScreen> {
         return;
       }
 
-      // Get user data from storage
-      final userData = await TokenStorage.getUserData();
-      _user = UserModel.fromStorage(userData);
+      print('📥 Loading user data from API...');
+
+      // 🔹 ЗАГРУЖАЕМ ДАННЫЕ С BACKEND API
+      final result = await _authRepository.getCurrentUser();
+
+      if (result.error != null) {
+        // Ошибка загрузки с API
+        print('❌ Error loading from API: ${result.error}');
+
+        // Если токен истек (401) - идем на login
+        if (result.error!.contains('истек') || result.error!.contains('недействителен')) {
+          if (mounted) {
+            context.go('/login');
+          }
+          return;
+        }
+
+        // Для других ошибок - загружаем из локального хранилища
+        print('📦 Fallback: Loading from local storage...');
+        final userData = await TokenStorage.getUserData();
+        _user = UserModel.fromStorage(userData);
+      } else {
+        // ✅ Успешно загрузили с API
+        final apiUser = result.response!;
+        print('✅ User data loaded from API:');
+        print('ID: ${apiUser.id}');
+        print('Email: ${apiUser.email}');
+        print('Username: ${apiUser.username}');
+        print('First Name: ${apiUser.firstName}');
+        print('Last Name: ${apiUser.lastName}');
+        print('Phone: ${apiUser.phoneNumber}');
+
+        // Создаем UserModel из API response
+        _user = UserModel(
+          id: apiUser.id.toString(),
+          email: apiUser.email,
+          firstName: apiUser.firstName,
+          lastName: apiUser.lastName,
+          username: apiUser.username,
+          phone: apiUser.phoneNumber,
+        );
+
+        // Сохраняем данные локально (для offline access)
+        await TokenStorage.saveUserData(
+          email: apiUser.email,
+          firstName: apiUser.firstName ?? '',
+          lastName: apiUser.lastName ?? '',
+          username: apiUser.username,
+          phone: apiUser.phoneNumber,
+        );
+
+        // ВРЕМЕННО ЗАКОММЕНТИРОВАНО - требует обновленный token_storage.dart
+        // Раскомментируйте после копирования token_storage.dart из outputs
+        /*
+        await TokenStorage.saveUserSpecificData(
+          apiUser.email,
+          firstName: apiUser.firstName,
+          lastName: apiUser.lastName,
+          phone: apiUser.phoneNumber,
+        );
+        */
+      }
 
       // Set controllers with user data
       _firstNameController.text = _user?.firstName ?? '';
@@ -80,7 +143,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       _originalEmail = _emailController.text;
       _originalPhone = _phoneController.text;
     } catch (e) {
-      print('Error loading user data: $e');
+      print('❌ Error loading user data: $e');
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -115,14 +178,27 @@ class _ProfileScreenState extends State<ProfileScreen> {
   /// Save changes
   Future<void> _saveChanges() async {
     try {
-      // Save updated user data to storage
+      final email = _emailController.text.trim();
+
+      // 1. Сохраняем в обычное хранилище (для текущей сессии)
       await TokenStorage.saveUserData(
-        email: _emailController.text.trim(),
+        email: email,
         firstName: _firstNameController.text.trim(),
         lastName: _lastNameController.text.trim(),
         phone: _phoneController.text.trim(),
         username: _user?.username,
       );
+
+      // ВРЕМЕННО ЗАКОММЕНТИРОВАНО - требует обновленный token_storage.dart
+      // Раскомментируйте после копирования token_storage.dart из outputs
+      /*
+      await TokenStorage.saveUserSpecificData(
+        email,
+        firstName: _firstNameController.text.trim(),
+        lastName: _lastNameController.text.trim(),
+        phone: _phoneController.text.trim(),
+      );
+      */
 
       // Update original values
       _originalFirstName = _firstNameController.text;

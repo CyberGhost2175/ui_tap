@@ -19,6 +19,10 @@
     <key>CFBundleDisplayName</key>
     <string>Ui Tap</string>
 
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>Нам нужен доступ к вашему местоположению для определения города и района</string>
+
+
     <key>CFBundleExecutable</key>
     <string>$(EXECUTABLE_NAME)</string>
 

@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
-import 'package:go_router/go_router.dart';
+import '../../data/models/settings/app_settings.dart';
+import '../../data/services/settings_storage.dart';
 
-/// SettingsScreen - app settings and preferences
-/// Contains: Dark mode, Payment methods, Notifications, Language, Support, About
+/// Settings Screen with persistent storage
+/// All settings are automatically saved and loaded
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({Key? key}) : super(key: key);
 
@@ -12,8 +13,97 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  bool _isDarkMode = false;
-  bool _notificationsEnabled = true;
+  bool _isLoading = true;
+  late AppSettings _settings;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSettings();
+  }
+
+  /// Load settings from storage
+  Future<void> _loadSettings() async {
+    setState(() => _isLoading = true);
+
+    try {
+      final settings = await SettingsStorage.loadSettings();
+      setState(() {
+        _settings = settings;
+        _isLoading = false;
+      });
+    } catch (e) {
+      print('Error loading settings: $e');
+      setState(() {
+        _settings = AppSettings(); // Use defaults
+        _isLoading = false;
+      });
+    }
+  }
+
+  /// Update and save language
+  Future<void> _updateLanguage(String language) async {
+    setState(() {
+      _settings = _settings.copyWith(language: language);
+    });
+
+    await SettingsStorage.updateLanguage(language);
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Язык изменен на ${_settings.languageName}'),
+          backgroundColor: Colors.green,
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
+  /// Update and save notifications
+  Future<void> _updateNotifications(bool value) async {
+    setState(() {
+      _settings = _settings.copyWith(notificationsEnabled: value);
+    });
+
+    await SettingsStorage.updateNotifications(value);
+  }
+
+  /// Update and save push notifications
+  Future<void> _updatePushNotifications(bool value) async {
+    setState(() {
+      _settings = _settings.copyWith(pushNotificationsEnabled: value);
+    });
+
+    await SettingsStorage.updatePushNotifications(value);
+  }
+
+  /// Update and save email notifications
+  Future<void> _updateEmailNotifications(bool value) async {
+    setState(() {
+      _settings = _settings.copyWith(emailNotificationsEnabled: value);
+    });
+
+    await SettingsStorage.updateEmailNotifications(value);
+  }
+
+  /// Update and save sound
+  Future<void> _updateSound(bool value) async {
+    setState(() {
+      _settings = _settings.copyWith(soundEnabled: value);
+    });
+
+    await SettingsStorage.updateSound(value);
+  }
+
+  /// Update and save vibration
+  Future<void> _updateVibration(bool value) async {
+    setState(() {
+      _settings = _settings.copyWith(vibrationEnabled: value);
+    });
+
+    await SettingsStorage.updateVibration(value);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -32,117 +122,199 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
         ),
       ),
-      body: ListView(
-        padding: EdgeInsets.symmetric(horizontal: 20.w, vertical: 16.h),
-        children: [
-          // Dark mode toggle
-          _buildToggleItem(
-            icon: Icons.dark_mode_outlined,
-            title: 'Тёмный режим',
-            value: _isDarkMode,
-            onChanged: (val) {
-              setState(() {
-                _isDarkMode = val;
-              });
-              // TODO: Implement theme switching
-            },
-          ),
-          SizedBox(height: 12.h),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : SingleChildScrollView(
+        padding: EdgeInsets.symmetric(horizontal: 20.w, vertical: 20.h),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Language Section
+            _buildSectionTitle('Язык'),
+            SizedBox(height: 12.h),
+            _buildLanguageTile('Русский', 'ru'),
+            SizedBox(height: 8.h),
+            _buildLanguageTile('Қазақша', 'kk'),
+            SizedBox(height: 8.h),
+            _buildLanguageTile('English', 'en'),
 
+            SizedBox(height: 32.h),
 
-          // Payment methods
+            // Notifications Section
+            _buildSectionTitle('Уведомления'),
+            SizedBox(height: 12.h),
+            _buildSwitchTile(
+              'Все уведомления',
+              'Получать уведомления о бронированиях',
+              _settings.notificationsEnabled,
+              _updateNotifications,
+            ),
+            SizedBox(height: 8.h),
+            _buildSwitchTile(
+              'Push-уведомления',
+              'Получать push-уведомления на устройство',
+              _settings.pushNotificationsEnabled,
+              _updatePushNotifications,
+              enabled: _settings.notificationsEnabled,
+            ),
+            SizedBox(height: 8.h),
+            _buildSwitchTile(
+              'Email уведомления',
+              'Получать уведомления на почту',
+              _settings.emailNotificationsEnabled,
+              _updateEmailNotifications,
+              enabled: _settings.notificationsEnabled,
+            ),
 
+            SizedBox(height: 32.h),
 
-          // Notifications
-          _buildNavigationItem(
-            icon: Icons.notifications_outlined,
-            title: 'Уведомления',
-            onTap: () {
-              // TODO: Navigate to notifications settings
-              _showComingSoonDialog('Настройки уведомлений');
-            },
-          ),
-          SizedBox(height: 12.h),
+            // Sound & Vibration Section
+            _buildSectionTitle('Звук и вибрация'),
+            SizedBox(height: 12.h),
+            _buildSwitchTile(
+              'Звук',
+              'Звуковые уведомления',
+              _settings.soundEnabled,
+              _updateSound,
+            ),
+            SizedBox(height: 8.h),
+            _buildSwitchTile(
+              'Вибрация',
+              'Вибрация при уведомлениях',
+              _settings.vibrationEnabled,
+              _updateVibration,
+            ),
 
+            SizedBox(height: 32.h),
 
+            // Other Section
+            _buildSectionTitle('Прочее'),
+            SizedBox(height: 12.h),
+            _buildActionTile(
+              'Политика конфиденциальности',
+              Icons.privacy_tip_outlined,
+                  () {
+                // TODO: Open privacy policy
+              },
+            ),
+            SizedBox(height: 8.h),
+            _buildActionTile(
+              'Поддержка',
+              Icons.help_outline,
+                  () {
+                // TODO: Open support
+              },
+            ),
+            SizedBox(height: 8.h),
+            _buildActionTile(
+              'О приложении',
+              Icons.info_outline,
+                  () {
+                _showAboutDialog();
+              },
+            ),
 
-          // Language
-          _buildNavigationItem(
-            icon: Icons.language,
-            title: 'Язык',
-            subtitle: 'Русский',
-            onTap: () {
-              // TODO: Navigate to language selection
-              _showLanguageDialog();
-            },
-          ),
-          SizedBox(height: 12.h),
-
-          // Divider
-          Divider(color: Colors.grey.shade200, height: 1),
-          SizedBox(height: 12.h),
-
-          // About - navigates to AboutScreen
-          _buildNavigationItem(
-            icon: Icons.info_outline,
-            title: 'О нас',
-            onTap: () {
-              context.push('/about'); // Navigate using GoRouter
-            },
-          ),
-          SizedBox(height: 40.h),
-
-          // Logout button
-          _buildLogoutButton(),
-        ],
+            SizedBox(height: 20.h),
+          ],
+        ),
       ),
     );
   }
 
-  /// Toggle item (e.g., Dark mode)
-  Widget _buildToggleItem({
-    required IconData icon,
-    required String title,
-    required bool value,
-    required Function(bool) onChanged,
-  }) {
+  /// Section title
+  Widget _buildSectionTitle(String title) {
+    return Text(
+      title,
+      style: TextStyle(
+        fontSize: 18.sp,
+        fontWeight: FontWeight.w700,
+        color: const Color(0xFF1A1A1A),
+      ),
+    );
+  }
+
+  /// Language selection tile
+  Widget _buildLanguageTile(String title, String langCode) {
+    final isSelected = _settings.language == langCode;
+
+    return GestureDetector(
+      onTap: () => _updateLanguage(langCode),
+      child: Container(
+        padding: EdgeInsets.symmetric(horizontal: 16.w, vertical: 14.h),
+        decoration: BoxDecoration(
+          color: isSelected ? const Color(0xFF295CDB).withOpacity(0.1) : const Color(0xFFF6F6F6),
+          borderRadius: BorderRadius.circular(12.r),
+          border: Border.all(
+            color: isSelected ? const Color(0xFF295CDB) : Colors.transparent,
+            width: 2,
+          ),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                title,
+                style: TextStyle(
+                  fontSize: 16.sp,
+                  fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
+                  color: isSelected ? const Color(0xFF295CDB) : const Color(0xFF1A1A1A),
+                ),
+              ),
+            ),
+            if (isSelected)
+              Icon(
+                Icons.check_circle,
+                color: const Color(0xFF295CDB),
+                size: 24.sp,
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Switch tile for settings
+  Widget _buildSwitchTile(
+      String title,
+      String subtitle,
+      bool value,
+      Function(bool) onChanged, {
+        bool enabled = true,
+      }) {
     return Container(
       padding: EdgeInsets.symmetric(horizontal: 16.w, vertical: 12.h),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: const Color(0xFFF6F6F6),
         borderRadius: BorderRadius.circular(12.r),
-        border: Border.all(color: Colors.grey.shade200),
       ),
       child: Row(
         children: [
-          // Icon
-          Container(
-            width: 40.w,
-            height: 40.w,
-            decoration: BoxDecoration(
-              color: const Color(0xFFF6F6F6),
-              borderRadius: BorderRadius.circular(10.r),
-            ),
-            child: Icon(icon, size: 22.sp, color: const Color(0xFF295CDB)),
-          ),
-          SizedBox(width: 12.w),
-
-          // Title
           Expanded(
-            child: Text(
-              title,
-              style: TextStyle(
-                fontSize: 16.sp,
-                fontWeight: FontWeight.w600,
-                color: const Color(0xFF1A1A1A),
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: 16.sp,
+                    fontWeight: FontWeight.w600,
+                    color: enabled ? const Color(0xFF1A1A1A) : Colors.grey.shade400,
+                  ),
+                ),
+                SizedBox(height: 4.h),
+                Text(
+                  subtitle,
+                  style: TextStyle(
+                    fontSize: 14.sp,
+                    color: enabled ? Colors.grey.shade600 : Colors.grey.shade400,
+                  ),
+                ),
+              ],
             ),
           ),
-
-          // Switch
           Switch(
             value: value,
-            onChanged: onChanged,
+            onChanged: enabled ? onChanged : null,
             activeColor: const Color(0xFF295CDB),
           ),
         ],
@@ -150,65 +322,34 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  /// Navigation item (with arrow)
-  Widget _buildNavigationItem({
-    required IconData icon,
-    required String title,
-    String? subtitle,
-    required VoidCallback onTap,
-  }) {
-    return InkWell(
+  /// Action tile (with navigation)
+  Widget _buildActionTile(String title, IconData icon, VoidCallback onTap) {
+    return GestureDetector(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(12.r),
       child: Container(
-        padding: EdgeInsets.symmetric(horizontal: 16.w, vertical: 12.h),
+        padding: EdgeInsets.symmetric(horizontal: 16.w, vertical: 14.h),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: const Color(0xFFF6F6F6),
           borderRadius: BorderRadius.circular(12.r),
-          border: Border.all(color: Colors.grey.shade200),
         ),
         child: Row(
           children: [
-            // Icon
-            Container(
-              width: 40.w,
-              height: 40.w,
-              decoration: BoxDecoration(
-                color: const Color(0xFFF6F6F6),
-                borderRadius: BorderRadius.circular(10.r),
-              ),
-              child: Icon(icon, size: 22.sp, color: const Color(0xFF295CDB)),
+            Icon(
+              icon,
+              size: 24.sp,
+              color: const Color(0xFF295CDB),
             ),
             SizedBox(width: 12.w),
-
-            // Title & Subtitle
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: TextStyle(
-                      fontSize: 16.sp,
-                      fontWeight: FontWeight.w600,
-                      color: const Color(0xFF1A1A1A),
-                    ),
-                  ),
-                  if (subtitle != null) ...[
-                    SizedBox(height: 2.h),
-                    Text(
-                      subtitle,
-                      style: TextStyle(
-                        fontSize: 13.sp,
-                        color: Colors.grey.shade600,
-                      ),
-                    ),
-                  ],
-                ],
+              child: Text(
+                title,
+                style: TextStyle(
+                  fontSize: 16.sp,
+                  fontWeight: FontWeight.w500,
+                  color: const Color(0xFF1A1A1A),
+                ),
               ),
             ),
-
-            // Arrow
             Icon(
               Icons.chevron_right,
               size: 24.sp,
@@ -220,180 +361,42 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  /// Logout button
-  Widget _buildLogoutButton() {
-    return InkWell(
-      onTap: () {
-        _showLogoutDialog();
-      },
-      borderRadius: BorderRadius.circular(12.r),
-      child: Container(
-        padding: EdgeInsets.symmetric(vertical: 14.h),
-        decoration: BoxDecoration(
-          color: Colors.red.shade50,
-          borderRadius: BorderRadius.circular(12.r),
-        ),
-        child: Center(
-          child: Text(
-            'Выйти',
-            style: TextStyle(
-              fontSize: 16.sp,
-              fontWeight: FontWeight.w600,
-              color: Colors.red.shade600,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// Show coming soon dialog
-  void _showComingSoonDialog(String feature) {
+  /// Show about dialog
+  void _showAboutDialog() {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(16.r),
         ),
-        title: Text(
-          feature,
-          style: TextStyle(
-            fontSize: 18.sp,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-        content: Text(
-          'Эта функция скоро будет доступна',
-          style: TextStyle(
-            fontSize: 14.sp,
-            color: Colors.grey.shade700,
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text(
-              'Понятно',
-              style: TextStyle(
-                fontSize: 16.sp,
-                fontWeight: FontWeight.w600,
-                color: const Color(0xFF295CDB),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// Show language selection dialog
-  void _showLanguageDialog() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16.r),
-        ),
-        title: Text(
-          'Выберите язык',
-          style: TextStyle(
-            fontSize: 18.sp,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
+        title: const Text('О приложении'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _buildLanguageOption('Русский', isSelected: true),
-            _buildLanguageOption('Қазақ', isSelected: false),
-            _buildLanguageOption('English', isSelected: false),
-          ],
-        ),
-      ),
-    );
-  }
-
-  /// Language option in dialog
-  Widget _buildLanguageOption(String language, {required bool isSelected}) {
-    return InkWell(
-      onTap: () {
-        // TODO: Implement language switching
-        Navigator.pop(context);
-      },
-      child: Container(
-        padding: EdgeInsets.symmetric(vertical: 12.h),
-        child: Row(
-          children: [
-            Icon(
-              isSelected
-                  ? Icons.radio_button_checked
-                  : Icons.radio_button_unchecked,
-              color: isSelected ? const Color(0xFF295CDB) : Colors.grey.shade400,
-              size: 22.sp,
-            ),
-            SizedBox(width: 12.w),
+            const Text('UI Tap'),
+            SizedBox(height: 8.h),
             Text(
-              language,
+              'Версия: 1.0.0',
               style: TextStyle(
-                fontSize: 16.sp,
-                fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-                color: isSelected ? const Color(0xFF1A1A1A) : Colors.grey.shade700,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  /// Show logout confirmation dialog
-  void _showLogoutDialog() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16.r),
-        ),
-        title: Text(
-          'Выход',
-          style: TextStyle(
-            fontSize: 18.sp,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-        content: Text(
-          'Вы уверены, что хотите выйти из аккаунта?',
-          style: TextStyle(
-            fontSize: 14.sp,
-            color: Colors.grey.shade700,
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text(
-              'Отмена',
-              style: TextStyle(
-                fontSize: 16.sp,
-                fontWeight: FontWeight.w600,
+                fontSize: 14.sp,
                 color: Colors.grey.shade600,
               ),
             ),
-          ),
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              // Navigate to login screen using GoRouter
-              context.go('/login');
-            },
-            child: Text(
-              'Выйти',
+            SizedBox(height: 8.h),
+            Text(
+              'Приложение для поиска и бронирования жилья',
               style: TextStyle(
-                fontSize: 16.sp,
-                fontWeight: FontWeight.w600,
-                color: Colors.red.shade600,
+                fontSize: 14.sp,
+                color: Colors.grey.shade600,
               ),
             ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Закрыть'),
           ),
         ],
       ),
