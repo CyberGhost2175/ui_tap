@@ -1,8 +1,9 @@
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// Service for storing and managing authentication tokens
+/// Service for storing and managing authentication tokens with refresh token support
 class TokenStorage {
   static const String _accessTokenKey = 'access_token';
+  static const String _refreshTokenKey = 'refresh_token'; // ⬅️ НОВОЕ
   static const String _tokenTypeKey = 'token_type';
   static const String _expiresAtKey = 'expires_at';
 
@@ -17,6 +18,7 @@ class TokenStorage {
   /// Save token after successful login/registration
   static Future<void> saveToken({
     required String accessToken,
+    String? refreshToken, // ⬅️ НОВЫЙ ПАРАМЕТР (опциональный)
     required String tokenType,
     required int expiresIn,
   }) async {
@@ -26,6 +28,12 @@ class TokenStorage {
     final expiresAt = DateTime.now().millisecondsSinceEpoch + (expiresIn * 1000);
 
     await prefs.setString(_accessTokenKey, accessToken);
+
+    // ⬅️ НОВОЕ: сохраняем refresh token если он есть
+    if (refreshToken != null) {
+      await prefs.setString(_refreshTokenKey, refreshToken);
+    }
+
     await prefs.setString(_tokenTypeKey, tokenType);
     await prefs.setInt(_expiresAtKey, expiresAt);
   }
@@ -55,6 +63,12 @@ class TokenStorage {
     return prefs.getString(_accessTokenKey);
   }
 
+  /// ⬅️ НОВЫЙ МЕТОД: Get refresh token
+  static Future<String?> getRefreshToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_refreshTokenKey);
+  }
+
   /// Get token type (usually "Bearer")
   static Future<String?> getTokenType() async {
     final prefs = await SharedPreferences.getInstance();
@@ -70,20 +84,26 @@ class TokenStorage {
     return '$type $token';
   }
 
-  /// Check if token is expired
+  /// ⬅️ ОБНОВЛЕНО: Check if token is expired (с буфером 60 сек)
   static Future<bool> isTokenExpired() async {
     final prefs = await SharedPreferences.getInstance();
     final expiresAt = prefs.getInt(_expiresAtKey);
 
     if (expiresAt == null) return true;
 
-    return DateTime.now().millisecondsSinceEpoch >= expiresAt;
+    // ⬅️ Добавляем буфер 60 секунд для обновления ДО истечения
+    final bufferTime = 60 * 1000;
+    return DateTime.now().millisecondsSinceEpoch >= (expiresAt - bufferTime);
   }
 
-  /// Check if user is logged in (has valid token)
+  /// ⬅️ ОБНОВЛЕНО: Check if user is logged in
   static Future<bool> isLoggedIn() async {
     final token = await getAccessToken();
     if (token == null) return false;
+
+    // ⬅️ НОВОЕ: если токен истек, но есть refresh token - считаем залогиненным
+    final hasRefreshToken = await getRefreshToken() != null;
+    if (hasRefreshToken) return true;
 
     return !(await isTokenExpired());
   }
@@ -102,10 +122,11 @@ class TokenStorage {
     };
   }
 
-  /// Clear all stored tokens and user data (logout)
+  /// ⬅️ ОБНОВЛЕНО: Clear all stored tokens and user data (logout)
   static Future<void> clearAll() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_accessTokenKey);
+    await prefs.remove(_refreshTokenKey); // ⬅️ НОВОЕ
     await prefs.remove(_tokenTypeKey);
     await prefs.remove(_expiresAtKey);
     await prefs.remove(_userIdKey);

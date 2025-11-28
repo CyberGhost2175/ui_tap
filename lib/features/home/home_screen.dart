@@ -2,10 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:intl/intl.dart';
+import '../../data/models/search/search_request_models.dart';
+import '../../data/services/search_request_api_service.dart';
 import '../../ui/widgets/map_widget.dart';
 import '../../ui/widgets/search_panel_widget.dart';
 import '../../ui/widgets/bottom_navigation_widget.dart';
 import '../bookings/bookings_screen.dart';
+import '../search/search_request_detail_screen.dart';
 import '../settings/settings_screen.dart';
 import '../profile/profile_screen.dart';
 
@@ -86,42 +90,40 @@ class _BookingSearchScreenState extends State<BookingSearchScreen> {
   }
 
   Future<void> _performSearch() async {
-    final pos = await _getUserPosition();
+    try {
+      final location = _searchPanelKey.currentState?.getSelectedLocation();
 
-    // Get selected location from search panel
-    final location = _searchPanelKey.currentState?.getSelectedLocation();
+      final request = SearchRequestCreate(
+        checkInDate: DateFormat('yyyy-MM-dd').format(_checkIn),
+        checkOutDate: DateFormat('yyyy-MM-dd').format(_checkOut),
+        oneNight: false,
+        price: int.tryParse(_customPrice) ?? 0,
+        countOfPeople: _adults + _children,
+        fromRating: 1,
+        toRating: 5,
+        unitTypes: [_filter == 'Отель' ? 'HOTEL_ROOM' : 'APARTMENT'],
+        districtIds: location?['districtId'] != null
+            ? [location!['districtId'] as int] : [],
+      );
 
-    final payload = {
-      'adults': _adults,
-      'children': _children,
-      'filter': _filter,
-      'checkIn': _checkIn.toIso8601String(),
-      'checkOut': _checkOut.toIso8601String(),
-      'customPrice': _customPrice.isEmpty ? null : int.tryParse(_customPrice),
-      'cityId': location?['cityId'],              // City ID from API
-      'cityName': location?['cityName'],          // City name
-      'districtId': location?['districtId'],      // District ID from API
-      'districtName': location?['districtName'],  // District name
-      'userLocation': pos == null
-          ? null
-          : {
-        'latitude': pos.latitude,
-        'longitude': pos.longitude,
-      },
-    };
+      final apiService = SearchRequestApiService();
+      final result = await apiService.createSearchRequest(request);
 
-    debugPrint("🔍 SEARCH PAYLOAD: $payload");
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Поиск: ${location?['cityName']}, ${location?['districtName']}'),
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(8.r),
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => SearchRequestDetailScreen(
+            requestId: result.id,
+          ),
         ),
-      ),
-    );
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Ошибка: $e'), backgroundColor: Colors.red),
+      );
+    }
   }
+
 
   Widget _buildHomeTab() {
     return Stack(

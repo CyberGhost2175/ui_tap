@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:go_router/go_router.dart';
-import '../../core/utils/validators.dart';
+import '../../core/utils/jwt_decoder.dart';
 import '../../data/repositories/auth_repository.dart';
+import '../../data/services/token_storage.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -12,21 +13,15 @@ class RegisterScreen extends StatefulWidget {
 }
 
 class _RegisterScreenState extends State<RegisterScreen> {
-  // Form key for validation
   final _formKey = GlobalKey<FormState>();
-
-  // Text controllers
   final _firstNameController = TextEditingController();
   final _lastNameController = TextEditingController();
   final _usernameController = TextEditingController();
   final _emailController = TextEditingController();
   final _phoneController = TextEditingController();
   final _passwordController = TextEditingController();
-
-  // Repository
   final _authRepository = AuthRepository();
 
-  // UI state
   bool _obscurePassword = true;
   bool _isLoading = false;
 
@@ -41,9 +36,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
     super.dispose();
   }
 
-  /// Handle registration
+  /// Handle registration with REAL API
   Future<void> _handleRegister() async {
-    // Validate form
     if (!_formKey.currentState!.validate()) {
       return;
     }
@@ -51,7 +45,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     setState(() => _isLoading = true);
 
     try {
-      // Call API
+      // ⬅️ ИСПРАВЛЕНО: передаем все параметры
       final result = await _authRepository.register(
         firstName: _firstNameController.text.trim(),
         lastName: _lastNameController.text.trim(),
@@ -64,121 +58,89 @@ class _RegisterScreenState extends State<RegisterScreen> {
       if (!mounted) return;
 
       if (result.error != null) {
-        // Show error
-        _showErrorSnackBar(result.error!);
+        // ❌ Ошибка от сервера
+        print('❌ Registration error: ${result.error}');
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(result.error!),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
+          ),
+        );
       } else if (result.response != null) {
-        // Success - НЕ сохраняем токен, т.к. идем на Login
+        // ✅ Успешная регистрация!
         final response = result.response!;
 
-        // Показываем success dialog
-        // Пользователь должен войти с этими же данными
-        _showSuccessDialog(response.accessToken);
+        print('✅ Registration successful!');
+        print('Token: ${response.accessToken.substring(0, 20)}...');
+        print('Expires in: ${response.expiresIn} seconds');
+
+        // Сохраняем токен
+        await TokenStorage.saveToken(
+          accessToken: response.accessToken,
+          tokenType: response.tokenType,
+          expiresIn: response.expiresIn,
+        );
+
+        // Декодируем JWT и извлекаем данные пользователя
+        print('🔍 Decoding JWT token...');
+        final userData = JwtDecoder.extractUserData(response.accessToken);
+
+        print('👤 User data from JWT:');
+        print('Email: ${userData['email']}');
+        print('First Name: ${userData['firstName']}');
+        print('Last Name: ${userData['lastName']}');
+        print('Username: ${userData['username']}');
+
+        // Сохраняем данные пользователя
+        await TokenStorage.saveUserData(
+          email: userData['email'] ?? _emailController.text.trim(),
+          firstName: userData['firstName'] ?? _firstNameController.text.trim(),
+          lastName: userData['lastName'] ?? _lastNameController.text.trim(),
+          username: userData['username'] ?? _usernameController.text.trim(),
+          phone: _phoneController.text.trim(),
+        );
+
+        print('💾 Token and user data saved to storage');
+
+        if (!mounted) return;
+
+        // Показываем успешное сообщение
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Регистрация успешна! Добро пожаловать!'),
+            backgroundColor: Colors.green,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
+          ),
+        );
+
+        // Переходим на главную
+        context.go('/home');
       }
+    } catch (e) {
+      print('❌ Unexpected error: $e');
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Непредвиденная ошибка: $e'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
     } finally {
       if (mounted) {
         setState(() => _isLoading = false);
       }
     }
-  }
-
-  /// Show error message
-  void _showErrorSnackBar(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: Colors.red,
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
-  }
-
-  /// Show success dialog
-  void _showSuccessDialog(String accessToken) {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
-        title: const Icon(
-          Icons.check_circle,
-          color: Colors.green,
-          size: 60,
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text(
-              'Регистрация успешна!',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              'Теперь вы можете войти.',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 14, color: Colors.grey),
-            ),
-            if (accessToken.isNotEmpty) ...[
-              const SizedBox(height: 16),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.grey[100],
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Column(
-                  children: [
-                    const Text(
-                      'Access Token получен',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.green,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '${accessToken.substring(0, 20)}...',
-                      style: const TextStyle(
-                        fontSize: 10,
-                        fontFamily: 'monospace',
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ],
-        ),
-        actions: [
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-                // После регистрации переходим на LOGIN, а не HOME
-                context.go('/login');
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF295CDB),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-              child: const Text(
-                'Войти',
-                style: TextStyle(color: Colors.white),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
   }
 
   @override
@@ -193,7 +155,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                // Logo
+                // Логотип
                 Center(
                   child: SvgPicture.asset(
                     'assets/icons/Logo.svg',
@@ -202,23 +164,33 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 ),
                 const SizedBox(height: 40),
 
-                // First Name
+                // Имя
                 _buildLabel("Имя"),
                 const SizedBox(height: 6),
                 _buildInputField(
                   controller: _firstNameController,
                   hintText: "Введите имя",
-                  validator: (value) => Validators.validateName(value, 'имя'),
+                  validator: (value) {
+                    if (value == null || value.isEmpty) {
+                      return 'Введите имя';
+                    }
+                    return null;
+                  },
                 ),
                 const SizedBox(height: 16),
 
-                // Last Name
+                // Фамилия
                 _buildLabel("Фамилия"),
                 const SizedBox(height: 6),
                 _buildInputField(
                   controller: _lastNameController,
                   hintText: "Введите фамилию",
-                  validator: (value) => Validators.validateName(value, 'фамилию'),
+                  validator: (value) {
+                    if (value == null || value.isEmpty) {
+                      return 'Введите фамилию';
+                    }
+                    return null;
+                  },
                 ),
                 const SizedBox(height: 16),
 
@@ -227,41 +199,67 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 const SizedBox(height: 6),
                 _buildInputField(
                   controller: _usernameController,
-                  hintText: "Придумайте имя пользователя",
-                  validator: Validators.validateUsername,
+                  hintText: "Введите имя пользователя",
+                  validator: (value) {
+                    if (value == null || value.isEmpty) {
+                      return 'Введите имя пользователя';
+                    }
+                    return null;
+                  },
                 ),
                 const SizedBox(height: 16),
 
-                // Email
+                // Почта
                 _buildLabel("Почта"),
                 const SizedBox(height: 6),
                 _buildInputField(
                   controller: _emailController,
                   hintText: "Введите почту",
                   keyboardType: TextInputType.emailAddress,
-                  validator: Validators.validateEmail,
+                  validator: (value) {
+                    if (value == null || value.isEmpty) {
+                      return 'Введите email';
+                    }
+                    if (!value.contains('@')) {
+                      return 'Некорректный email';
+                    }
+                    return null;
+                  },
                 ),
                 const SizedBox(height: 16),
 
-                // Phone Number
+                // Телефон
                 _buildLabel("Номер телефона"),
                 const SizedBox(height: 6),
                 _buildInputField(
                   controller: _phoneController,
                   hintText: "+7 (___) ___-__-__",
                   keyboardType: TextInputType.phone,
-                  validator: Validators.validatePhone,
+                  validator: (value) {
+                    if (value == null || value.isEmpty) {
+                      return 'Введите номер телефона';
+                    }
+                    return null;
+                  },
                 ),
                 const SizedBox(height: 16),
 
-                // Password
+                // Пароль
                 _buildLabel("Пароль"),
                 const SizedBox(height: 6),
                 _buildInputField(
                   controller: _passwordController,
                   hintText: "Придумайте пароль",
                   obscure: _obscurePassword,
-                  validator: Validators.validatePassword,
+                  validator: (value) {
+                    if (value == null || value.isEmpty) {
+                      return 'Введите пароль';
+                    }
+                    if (value.length < 6) {
+                      return 'Пароль должен быть минимум 6 символов';
+                    }
+                    return null;
+                  },
                   suffixIcon: IconButton(
                     icon: Icon(
                       _obscurePassword
@@ -269,14 +267,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           : Icons.visibility_outlined,
                       color: Colors.grey,
                     ),
-                    onPressed: () {
-                      setState(() => _obscurePassword = !_obscurePassword);
-                    },
+                    onPressed: () =>
+                        setState(() => _obscurePassword = !_obscurePassword),
                   ),
                 ),
                 const SizedBox(height: 30),
 
-                // Register Button
+                // Кнопка регистрации
                 SizedBox(
                   width: double.infinity,
                   height: 50,
@@ -295,7 +292,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       width: 20,
                       child: CircularProgressIndicator(
                         strokeWidth: 2,
-                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                        valueColor:
+                        AlwaysStoppedAnimation<Color>(Colors.white),
                       ),
                     )
                         : const Text(
@@ -310,7 +308,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 ),
                 const SizedBox(height: 24),
 
-                // Already have account
+                // Уже есть аккаунт
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
@@ -330,7 +328,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     ),
                   ],
                 ),
-                const SizedBox(height: 40),
               ],
             ),
           ),
@@ -339,7 +336,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
     );
   }
 
-  /// Build label widget
   Widget _buildLabel(String text) {
     return Align(
       alignment: Alignment.centerLeft,
@@ -354,7 +350,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
     );
   }
 
-  /// Build input field widget
   Widget _buildInputField({
     required TextEditingController controller,
     required String hintText,

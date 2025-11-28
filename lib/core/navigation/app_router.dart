@@ -5,7 +5,9 @@ import 'package:ui_tap/features/auth/register_screen.dart';
 import 'package:ui_tap/features/profile/profile_screen.dart';
 import 'package:ui_tap/features/splash/splash_screen.dart';
 import '../../data/services/token_storage.dart';
+import '../../features/bookings/bookings_screen.dart';
 import '../../features/home/home_screen.dart';
+import '../../features/settings/settings_screen.dart';
 // TODO: Import your actual screens
 // import '../features/home/home_screen.dart';
 
@@ -41,15 +43,14 @@ class AppRouter {
         builder: (context, state) => const ProfileScreen(),
       ),
 
-      // Add more protected routes here
-      // GoRoute(
-      //   path: '/bookings',
-      //   builder: (context, state) => const BookingsScreen(),
-      // ),
-      // GoRoute(
-      //   path: '/settings',
-      //   builder: (context, state) => const SettingsScreen(),
-      // ),
+      GoRoute(
+        path: '/bookings',
+        builder: (context, state) => const BookingsScreen(),
+      ),
+      GoRoute(
+        path: '/settings',
+        builder: (context, state) => const SettingsScreen(),
+      ),
     ],
   );
 

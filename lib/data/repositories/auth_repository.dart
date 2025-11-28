@@ -33,7 +33,7 @@ class AuthRepository {
         username: username,
         email: email,
         password: password,
-        phoneNumber: phoneNumber,
+        phoneNumber: phoneNumber, // ⬅️ ИСПРАВЛЕНО: phoneNumber вместо phone
       );
 
       final response = await _apiService.register(request);
@@ -70,15 +70,6 @@ class AuthRepository {
     }
   }
 
-  /// Save access token to local storage
-  /// Call this after successful registration
-  Future<void> saveAccessToken(String token) async {
-    // TODO: Implement token storage using SharedPreferences or FlutterSecureStorage
-    // Example:
-    // final prefs = await SharedPreferences.getInstance();
-    // await prefs.setString('access_token', token);
-  }
-
   /// Get current user data from backend
   ///
   /// Returns [UserResponse] with user data on success (200)
@@ -100,5 +91,10 @@ class AuthRepository {
     } catch (e) {
       return (response: null, error: 'Неизвестная ошибка');
     }
+  }
+
+  /// ⬅️ НОВЫЙ МЕТОД: Logout
+  Future<void> logout() async {
+    await _apiService.logout();
   }
 }
