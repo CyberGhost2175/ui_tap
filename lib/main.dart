@@ -2,9 +2,29 @@ import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'core/navigation/app_router.dart';
+import 'data/services/auth_api_service.dart';
 
-void main() {
+/// 🚀 Main entry point with auto-refresh initialization
+void main() async {
+  // Ensure Flutter is initialized
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // 🔄 Initialize auto-refresh on app startup
+  await _initializeAutoRefresh();
+
   runApp(const UiTapApp());
+}
+
+/// Initialize automatic token refresh
+Future<void> _initializeAutoRefresh() async {
+  try {
+    final authService = AuthApiService();
+    await authService.initAutoRefresh();
+    print('✅ [MAIN] Auto-refresh initialized');
+  } catch (e) {
+    print('❌ [MAIN] Auto-refresh initialization failed: $e');
+    // Continue app startup even if initialization fails
+  }
 }
 
 class UiTapApp extends StatelessWidget {
@@ -21,7 +41,7 @@ class UiTapApp extends StatelessWidget {
           title: 'UI Tap',
           debugShowCheckedModeBanner: false,
 
-          // 🔧 FIX: Add localizations
+          // Localizations
           localizationsDelegates: const [
             GlobalMaterialLocalizations.delegate,
             GlobalWidgetsLocalizations.delegate,
@@ -33,15 +53,18 @@ class UiTapApp extends StatelessWidget {
             Locale('kk', ''), // Kazakh
           ],
 
+          // Theme
           theme: ThemeData(
             primaryColor: const Color(0xFF295CDB),
             scaffoldBackgroundColor: Colors.white,
-            fontFamily: 'SF Pro Display', // Or your custom font
+            fontFamily: 'SF Pro Display',
             colorScheme: ColorScheme.fromSeed(
               seedColor: const Color(0xFF295CDB),
             ),
             useMaterial3: true,
           ),
+
+          // Router
           routerConfig: AppRouter.router,
         );
       },

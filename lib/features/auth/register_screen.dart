@@ -45,7 +45,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
     setState(() => _isLoading = true);
 
     try {
-      // ⬅️ ИСПРАВЛЕНО: передаем все параметры
       final result = await _authRepository.register(
         firstName: _firstNameController.text.trim(),
         lastName: _lastNameController.text.trim(),
@@ -58,7 +57,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
       if (!mounted) return;
 
       if (result.error != null) {
-        // ❌ Ошибка от сервера
         print('❌ Registration error: ${result.error}');
 
         ScaffoldMessenger.of(context).showSnackBar(
@@ -72,21 +70,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
           ),
         );
       } else if (result.response != null) {
-        // ✅ Успешная регистрация!
         final response = result.response!;
 
         print('✅ Registration successful!');
         print('Token: ${response.accessToken.substring(0, 20)}...');
         print('Expires in: ${response.expiresIn} seconds');
 
-        // Сохраняем токен
         await TokenStorage.saveToken(
           accessToken: response.accessToken,
           tokenType: response.tokenType,
           expiresIn: response.expiresIn,
         );
 
-        // Декодируем JWT и извлекаем данные пользователя
         print('🔍 Decoding JWT token...');
         final userData = JwtDecoder.extractUserData(response.accessToken);
 
@@ -96,7 +91,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
         print('Last Name: ${userData['lastName']}');
         print('Username: ${userData['username']}');
 
-        // Сохраняем данные пользователя
         await TokenStorage.saveUserData(
           email: userData['email'] ?? _emailController.text.trim(),
           firstName: userData['firstName'] ?? _firstNameController.text.trim(),
@@ -109,7 +103,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
         if (!mounted) return;
 
-        // Показываем успешное сообщение
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: const Text('Регистрация успешна! Добро пожаловать!'),
@@ -121,7 +114,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
           ),
         );
 
-        // Переходим на главную
         context.go('/home');
       }
     } catch (e) {
@@ -145,192 +137,224 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final screenHeight = MediaQuery.of(context).size.height;
+    final keyboardVisible = MediaQuery.of(context).viewInsets.bottom > 0;
+
     return Scaffold(
       backgroundColor: Colors.white,
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 40),
-          child: Form(
-            key: _formKey,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                // Логотип
-                Center(
-                  child: SvgPicture.asset(
-                    'assets/icons/Logo.svg',
-                    height: 80,
-                  ),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            return SingleChildScrollView(
+              physics: keyboardVisible
+                  ? const AlwaysScrollableScrollPhysics()
+                  : const NeverScrollableScrollPhysics(),
+              padding: EdgeInsets.symmetric(
+                horizontal: 24,
+                vertical: screenHeight > 700 ? 20 : 14,
+              ),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  minHeight: constraints.maxHeight,
                 ),
-                const SizedBox(height: 40),
-
-                // Имя
-                _buildLabel("Имя"),
-                const SizedBox(height: 6),
-                _buildInputField(
-                  controller: _firstNameController,
-                  hintText: "Введите имя",
-                  validator: (value) {
-                    if (value == null || value.isEmpty) {
-                      return 'Введите имя';
-                    }
-                    return null;
-                  },
-                ),
-                const SizedBox(height: 16),
-
-                // Фамилия
-                _buildLabel("Фамилия"),
-                const SizedBox(height: 6),
-                _buildInputField(
-                  controller: _lastNameController,
-                  hintText: "Введите фамилию",
-                  validator: (value) {
-                    if (value == null || value.isEmpty) {
-                      return 'Введите фамилию';
-                    }
-                    return null;
-                  },
-                ),
-                const SizedBox(height: 16),
-
-                // Username
-                _buildLabel("Имя пользователя"),
-                const SizedBox(height: 6),
-                _buildInputField(
-                  controller: _usernameController,
-                  hintText: "Введите имя пользователя",
-                  validator: (value) {
-                    if (value == null || value.isEmpty) {
-                      return 'Введите имя пользователя';
-                    }
-                    return null;
-                  },
-                ),
-                const SizedBox(height: 16),
-
-                // Почта
-                _buildLabel("Почта"),
-                const SizedBox(height: 6),
-                _buildInputField(
-                  controller: _emailController,
-                  hintText: "Введите почту",
-                  keyboardType: TextInputType.emailAddress,
-                  validator: (value) {
-                    if (value == null || value.isEmpty) {
-                      return 'Введите email';
-                    }
-                    if (!value.contains('@')) {
-                      return 'Некорректный email';
-                    }
-                    return null;
-                  },
-                ),
-                const SizedBox(height: 16),
-
-                // Телефон
-                _buildLabel("Номер телефона"),
-                const SizedBox(height: 6),
-                _buildInputField(
-                  controller: _phoneController,
-                  hintText: "+7 (___) ___-__-__",
-                  keyboardType: TextInputType.phone,
-                  validator: (value) {
-                    if (value == null || value.isEmpty) {
-                      return 'Введите номер телефона';
-                    }
-                    return null;
-                  },
-                ),
-                const SizedBox(height: 16),
-
-                // Пароль
-                _buildLabel("Пароль"),
-                const SizedBox(height: 6),
-                _buildInputField(
-                  controller: _passwordController,
-                  hintText: "Придумайте пароль",
-                  obscure: _obscurePassword,
-                  validator: (value) {
-                    if (value == null || value.isEmpty) {
-                      return 'Введите пароль';
-                    }
-                    if (value.length < 6) {
-                      return 'Пароль должен быть минимум 6 символов';
-                    }
-                    return null;
-                  },
-                  suffixIcon: IconButton(
-                    icon: Icon(
-                      _obscurePassword
-                          ? Icons.visibility_off_outlined
-                          : Icons.visibility_outlined,
-                      color: Colors.grey,
-                    ),
-                    onPressed: () =>
-                        setState(() => _obscurePassword = !_obscurePassword),
-                  ),
-                ),
-                const SizedBox(height: 30),
-
-                // Кнопка регистрации
-                SizedBox(
-                  width: double.infinity,
-                  height: 50,
-                  child: ElevatedButton(
-                    onPressed: _isLoading ? null : _handleRegister,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF295CDB),
-                      disabledBackgroundColor: Colors.grey[300],
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                    child: _isLoading
-                        ? const SizedBox(
-                      height: 20,
-                      width: 20,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        valueColor:
-                        AlwaysStoppedAnimation<Color>(Colors.white),
-                      ),
-                    )
-                        : const Text(
-                      'Зарегистрировать',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.white,
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 24),
-
-                // Уже есть аккаунт
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Text(
-                      "Есть аккаунт? ",
-                      style: TextStyle(fontSize: 14, color: Colors.black87),
-                    ),
-                    GestureDetector(
-                      onTap: () => context.go('/login'),
-                      child: const Text(
-                        "Войти",
-                        style: TextStyle(
-                          color: Color(0xFF295CDB),
-                          fontWeight: FontWeight.w600,
+                child: IntrinsicHeight(
+                  child: Form(
+                    key: _formKey,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Center(
+                          child: SvgPicture.asset(
+                            'assets/icons/Logo.svg',
+                            height: screenHeight > 700 ? 65 : 50,
+                          ),
                         ),
-                      ),
+                        SizedBox(height: screenHeight > 700 ? 26 : 18),
+
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  _buildLabel("Имя"),
+                                  const SizedBox(height: 6),
+                                  _buildInputField(
+                                    controller: _firstNameController,
+                                    hintText: "Имя",
+                                    validator: (value) {
+                                      if (value == null || value.isEmpty) {
+                                        return 'Введите имя';
+                                      }
+                                      return null;
+                                    },
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  _buildLabel("Фамилия"),
+                                  const SizedBox(height: 6),
+                                  _buildInputField(
+                                    controller: _lastNameController,
+                                    hintText: "Фамилия",
+                                    validator: (value) {
+                                      if (value == null || value.isEmpty) {
+                                        return 'Введите фамилию';
+                                      }
+                                      return null;
+                                    },
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                        SizedBox(height: screenHeight > 700 ? 14 : 10),
+
+                        _buildLabel("Имя пользователя"),
+                        const SizedBox(height: 6),
+                        _buildInputField(
+                          controller: _usernameController,
+                          hintText: "Введите имя пользователя",
+                          validator: (value) {
+                            if (value == null || value.isEmpty) {
+                              return 'Введите имя пользователя';
+                            }
+                            return null;
+                          },
+                        ),
+                        SizedBox(height: screenHeight > 700 ? 14 : 10),
+
+                        _buildLabel("Почта"),
+                        const SizedBox(height: 6),
+                        _buildInputField(
+                          controller: _emailController,
+                          hintText: "Введите почту",
+                          keyboardType: TextInputType.emailAddress,
+                          validator: (value) {
+                            if (value == null || value.isEmpty) {
+                              return 'Введите email';
+                            }
+                            if (!value.contains('@')) {
+                              return 'Некорректный email';
+                            }
+                            return null;
+                          },
+                        ),
+                        SizedBox(height: screenHeight > 700 ? 14 : 10),
+
+                        _buildLabel("Номер телефона"),
+                        const SizedBox(height: 6),
+                        _buildInputField(
+                          controller: _phoneController,
+                          hintText: "+7 (___) ___-__-__",
+                          keyboardType: TextInputType.phone,
+                          validator: (value) {
+                            if (value == null || value.isEmpty) {
+                              return 'Введите номер телефона';
+                            }
+                            return null;
+                          },
+                        ),
+                        SizedBox(height: screenHeight > 700 ? 14 : 10),
+
+                        _buildLabel("Пароль"),
+                        const SizedBox(height: 6),
+                        _buildInputField(
+                          controller: _passwordController,
+                          hintText: "Придумайте пароль",
+                          obscure: _obscurePassword,
+                          validator: (value) {
+                            if (value == null || value.isEmpty) {
+                              return 'Введите пароль';
+                            }
+                            if (value.length < 6) {
+                              return 'Минимум 6 символов';
+                            }
+                            return null;
+                          },
+                          suffixIcon: IconButton(
+                            icon: Icon(
+                              _obscurePassword
+                                  ? Icons.visibility_off_outlined
+                                  : Icons.visibility_outlined,
+                              color: Colors.grey,
+                              size: 22,
+                            ),
+                            onPressed: () {
+                              setState(() {
+                                _obscurePassword = !_obscurePassword;
+                              });
+                            },
+                          ),
+                        ),
+                        SizedBox(height: screenHeight > 700 ? 22 : 18),
+
+                        SizedBox(
+                          width: double.infinity,
+                          height: 50,
+                          child: ElevatedButton(
+                            onPressed: _isLoading ? null : _handleRegister,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF295CDB),
+                              disabledBackgroundColor: Colors.grey[300],
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                            child: _isLoading
+                                ? const SizedBox(
+                              height: 20,
+                              width: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                              ),
+                            )
+                                : const Text(
+                              'Зарегистрировать',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                        ),
+                        SizedBox(height: screenHeight > 700 ? 18 : 14),
+
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Text(
+                              "Есть аккаунт? ",
+                              style: TextStyle(fontSize: 14, color: Colors.black87),
+                            ),
+                            GestureDetector(
+                              onTap: () => context.go('/login'),
+                              child: const Text(
+                                "Войти",
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  color: Color(0xFF295CDB),
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
                     ),
-                  ],
+                  ),
                 ),
-              ],
-            ),
-          ),
+              ),
+            );
+          },
         ),
       ),
     );
@@ -342,7 +366,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       child: Text(
         text,
         style: TextStyle(
-          fontSize: 14,
+          fontSize: 13,
           fontWeight: FontWeight.w600,
           color: Colors.grey[800],
         ),
@@ -363,13 +387,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
       obscureText: obscure,
       keyboardType: keyboardType,
       validator: validator,
+      style: const TextStyle(fontSize: 15),
       decoration: InputDecoration(
         hintText: hintText,
+        hintStyle: TextStyle(fontSize: 14, color: Colors.grey[400]),
         filled: true,
         fillColor: Colors.grey[100],
         suffixIcon: suffixIcon,
-        contentPadding:
-        const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
           borderSide: BorderSide.none,
@@ -382,6 +407,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           borderRadius: BorderRadius.circular(12),
           borderSide: const BorderSide(color: Colors.red, width: 2),
         ),
+        errorStyle: const TextStyle(fontSize: 11, height: 0.8),
       ),
     );
   }

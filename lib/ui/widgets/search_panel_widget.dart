@@ -102,6 +102,7 @@ class SearchPanelWidgetState extends State<SearchPanelWidget> {
 
   List<District> _availableDistricts = [];
   bool _isLoadingDistricts = false;
+  int? get selectedDistrictId => _selectedDistrictId;
 
   @override
   void initState() {
@@ -112,6 +113,8 @@ class SearchPanelWidgetState extends State<SearchPanelWidget> {
     // Load districts for default city
     _loadDistricts(1);
   }
+
+
 
   /// Get access token from TokenStorage (SharedPreferences)
   Future<String?> _getAccessToken() async {
@@ -265,13 +268,13 @@ class SearchPanelWidgetState extends State<SearchPanelWidget> {
                   _buildDates(context),
 
                   if (!isCollapsed) ...[
-                    SizedBox(height: 18.h),
+                    SizedBox(height: 14.h),
                     _buildCounter('Кол-во гостей', widget.adults, widget.onAdultsChanged, false),
-                    SizedBox(height: 18.h),
+                    SizedBox(height: 14.h),
 
                     // City dropdown
                     _buildCityDropdown(context),
-                    SizedBox(height: 18.h),
+                    SizedBox(height: 10.h),
 
                     // District dropdown
                     _buildDistrictDropdown(context),
@@ -759,7 +762,7 @@ class SearchPanelWidgetState extends State<SearchPanelWidget> {
             ),
           ],
         ),
-        SizedBox(height: 10.h),
+        SizedBox(height: 7.h),
         InkWell(
           onTap: _isLoadingDistricts || _availableDistricts.isEmpty
               ? null
@@ -901,62 +904,75 @@ class SearchPanelWidgetState extends State<SearchPanelWidget> {
     );
   }
 
-  // --- Filter ---
   Widget _buildFilter() {
-    final items = ['Отель', 'Квартира'];
+    final items = ['Все', 'Отель', 'Квартира'];
+    final index = items.indexOf(widget.filter);
+
+    final segmentWidth = (1.sw - 48.w) / items.length;
+
     return Container(
+      height: 45.h,
       padding: EdgeInsets.all(6.w),
       decoration: BoxDecoration(
         color: const Color(0xFFF6F6F6),
         borderRadius: BorderRadius.circular(25.r),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 6,
-            offset: const Offset(0, 2),
-          ),
-        ],
       ),
-      child: Row(
-        children: items.map((i) {
-          final sel = (i == widget.filter);
-          return Expanded(
-            child: GestureDetector(
-              onTap: () => widget.onFilterChanged(i),
-              behavior: HitTestBehavior.opaque,
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                curve: Curves.easeInOut,
-                alignment: Alignment.center,
-                padding: EdgeInsets.symmetric(vertical: 10.h),
-                decoration: BoxDecoration(
-                  color: sel ? Colors.white : Colors.transparent,
-                  borderRadius: BorderRadius.circular(20.r),
-                  boxShadow: sel
-                      ? [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.05),
-                      blurRadius: 6,
-                      offset: const Offset(0, 2),
-                    ),
-                  ]
-                      : [],
-                ),
-                child: Text(
-                  i,
-                  style: TextStyle(
-                    fontSize: 14.sp,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.black87,
+      child: Stack(
+        children: [
+          // --- ПЛАВНАЯ ПОДЛОЖКА ---
+          AnimatedPositioned(
+            duration: const Duration(milliseconds: 260),
+            curve: Curves.easeInOut,
+            left: segmentWidth * index,
+            top: 0,
+            bottom: 0,
+            child: Container(
+              width: segmentWidth,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(20.r),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.05),
+                    blurRadius: 6,
+                    offset: const Offset(0, 2),
                   ),
-                ),
+                ],
               ),
             ),
-          );
-        }).toList(),
+          ),
+
+          // --- ТЕКСТ + КЛИК ---
+          Row(
+            children: items.map((i) {
+              final sel = (i == widget.filter);
+
+              return Expanded(
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => widget.onFilterChanged(i),
+                  child: Center(
+                    child: AnimatedDefaultTextStyle(
+                      duration: const Duration(milliseconds: 200),
+                      curve: Curves.easeInOut,
+                      style: TextStyle(
+                        fontSize: 14.sp,
+                        fontWeight: FontWeight.w600,
+                        color: sel ? Colors.black87 : Colors.black54,
+                      ),
+                      child: Text(i),
+                    ),
+                  ),
+                ),
+              );
+            }).toList(),
+          )
+        ],
       ),
     );
   }
+
+
 
   // --- Price ---
   Widget _buildRecommendedPrice() {
@@ -964,18 +980,14 @@ class SearchPanelWidgetState extends State<SearchPanelWidget> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          '20 000KZT',
+          'Цена',
           style: TextStyle(
-            fontSize: 14.sp,
+            fontSize: 16.sp,
             fontWeight: FontWeight.w700,
             color: Colors.black87,
           ),
         ),
-        SizedBox(height: 2.h),
-        Text(
-          'Рекомендуемая цена в вашем районе',
-          style: TextStyle(fontSize: 12.sp, color: Colors.grey.shade500),
-        ),
+
       ],
     );
   }

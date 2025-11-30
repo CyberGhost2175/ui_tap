@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
-import 'package:flutter_svg/flutter_svg.dart';
-import 'package:geolocator/geolocator.dart';
 import 'package:intl/intl.dart';
 import '../../data/models/search/search_request_models.dart';
 import '../../data/services/search_request_api_service.dart';
@@ -9,7 +7,7 @@ import '../../ui/widgets/map_widget.dart';
 import '../../ui/widgets/search_panel_widget.dart';
 import '../../ui/widgets/bottom_navigation_widget.dart';
 import '../bookings/bookings_screen.dart';
-import '../search/search_request_detail_screen.dart';
+import '../search/active_search_request_screen.dart';
 import '../settings/settings_screen.dart';
 import '../profile/profile_screen.dart';
 
@@ -27,28 +25,19 @@ class _BookingSearchScreenState extends State<BookingSearchScreen> {
 
   PanelState _panelState = PanelState.collapsed;
   PanelState? _previousPanelState;
-  bool _isSelectingLocation = false;
 
+  // Search params
   int _adults = 1;
   int _children = 0;
-  String _filter = 'Квартира';
-  String _customPrice = '';
-  DateTime _checkIn = DateTime.now().add(const Duration(days: 1));
-  DateTime _checkOut = DateTime.now().add(const Duration(days: 6));
+  String _filter = 'Отель';
+  DateTime _checkIn = DateTime.now();
+  DateTime _checkOut = DateTime.now().add(const Duration(days: 1));
+  String _customPrice = '20000';
 
-  final GlobalKey<MapWidgetState> _mapKey = GlobalKey<MapWidgetState>();
-  final GlobalKey<SearchPanelWidgetState> _searchPanelKey = GlobalKey<SearchPanelWidgetState>();
-
-  double _getPanelHeight() {
-    switch (_panelState) {
-      case PanelState.collapsed:
-        return 300.h;
-      case PanelState.expanded:
-        return 0.95.sh;
-      case PanelState.hidden:
-        return 0;
-    }
-  }
+  bool _isSelectingLocation = false;
+  final GlobalKey _mapKey = GlobalKey();
+  final GlobalKey<SearchPanelWidgetState> _searchPanelKey =
+  GlobalKey<SearchPanelWidgetState>();
 
   void _handlePanelTap() {
     if (_panelState == PanelState.collapsed) {
@@ -57,73 +46,185 @@ class _BookingSearchScreenState extends State<BookingSearchScreen> {
   }
 
   void _collapsePanel() {
-    if (_panelState == PanelState.expanded) {
-      setState(() => _panelState = PanelState.collapsed);
+    setState(() => _panelState = PanelState.collapsed);
+  }
+
+  double _getPanelHeight() {
+    switch (_panelState) {
+      case PanelState.collapsed:
+        return 300.h;
+      case PanelState.expanded:
+        return 750.h;
+      case PanelState.hidden:
+        return 0;
     }
   }
 
-  void _confirmLocation() {
-    setState(() {
-      _isSelectingLocation = false;
-      _panelState = PanelState.collapsed;
-      _mapKey.currentState?.confirmLocation();
-    });
-  }
-
-  void _goToCurrentLocation() {
-    _mapKey.currentState?.goToCurrentLocation();
-  }
-
-  Future<Position?> _getUserPosition() async {
-    bool enabled = await Geolocator.isLocationServiceEnabled();
-    if (!enabled) return null;
-
-    LocationPermission permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-      if (permission == LocationPermission.denied) return null;
-    }
-
-    if (permission == LocationPermission.deniedForever) return null;
-
-    return Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
-  }
-
+  /// 🔍 Выполнение поиска с отправкой на бэкенд
   Future<void> _performSearch() async {
-    try {
-      final location = _searchPanelKey.currentState?.getSelectedLocation();
+    print('🔍 [SEARCH] Starting search...');
 
+    // Показываем loader
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => Center(
+        child: Container(
+          padding: EdgeInsets.all(24.w),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12.r),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(color: const Color(0xFF295CDB)),
+              SizedBox(height: 16.h),
+              Text(
+                'Создаем заявку...',
+                style: TextStyle(
+                  fontSize: 16.sp,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    try {
+      // Получаем выбранные районы из search panel
+      final searchPanelState = _searchPanelKey.currentState;
+      List<int> selectedDistrictIds = [];
+
+      if (searchPanelState != null) {
+        try {
+          // Попытка получить через геттер (если он добавлен)
+          final districtId = searchPanelState.selectedDistrictId;
+          if (districtId != null) {
+            selectedDistrictIds = [districtId];
+          }
+        } catch (e) {
+          // Если геттер не найден, используем дефолтные районы
+          print('⚠️ [SEARCH] selectedDistrictId getter not found, using default districts');
+          selectedDistrictIds = [1]; // Дефолтный район
+        }
+      }
+
+      // Валидация - если районы не выбраны, используем дефолтный
+      if (selectedDistrictIds.isEmpty) {
+        print('⚠️ [SEARCH] No districts selected, using default');
+        selectedDistrictIds = [1]; // Дефолтный район
+
+        // Показываем предупреждение, но НЕ блокируем поиск
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Район не выбран, используем район по умолчанию'),
+            backgroundColor: Colors.orange,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+
+      // Форматируем даты в формате "yyyy-MM-dd"
+      final checkInDate = DateFormat('yyyy-MM-dd').format(_checkIn);
+      final checkOutDate = DateFormat('yyyy-MM-dd').format(_checkOut);
+
+      // Парсим цену
+      final price = int.tryParse(_customPrice.replaceAll(RegExp(r'[^\d]'), '')) ?? 20000;
+
+      // Определяем тип жилья
+      final unitTypes = _filter == 'Отель' ? ['HOTEL_ROOM'] : ['APARTMENT'];
+
+      // Создаем запрос
       final request = SearchRequestCreate(
-        checkInDate: DateFormat('yyyy-MM-dd').format(_checkIn),
-        checkOutDate: DateFormat('yyyy-MM-dd').format(_checkOut),
-        oneNight: false,
-        price: int.tryParse(_customPrice) ?? 0,
+        checkInDate: checkInDate,
+        checkOutDate: checkOutDate,
+        oneNight: _checkOut.difference(_checkIn).inDays == 1,
+        price: price,
         countOfPeople: _adults + _children,
-        fromRating: 1,
-        toRating: 5,
-        unitTypes: [_filter == 'Отель' ? 'HOTEL_ROOM' : 'APARTMENT'],
-        districtIds: location?['districtId'] != null
-            ? [location!['districtId'] as int] : [],
+        fromRating: 4, // По умолчанию
+        toRating: 5,   // По умолчанию
+        unitTypes: unitTypes,
+        districtIds: selectedDistrictIds,
+        // serviceDictionaryIds и conditionDictionaryIds опциональны
       );
 
+      print('📤 [SEARCH] Request: ${request.toJson()}');
+
+      // Отправляем запрос
       final apiService = SearchRequestApiService();
       final result = await apiService.createSearchRequest(request);
 
+      print('✅ [SEARCH] Success! Request ID: ${result.id}');
+
+      // Закрываем loader
+      Navigator.pop(context);
+
+      // Показываем экран с заявкой
       Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (context) => SearchRequestDetailScreen(
+          builder: (context) => ActiveSearchRequestScreen(
             requestId: result.id,
           ),
         ),
       );
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Ошибка: $e'), backgroundColor: Colors.red),
-      );
+      print('❌ [SEARCH] Error: $e');
+
+      // Закрываем loader
+      Navigator.pop(context);
+
+      // Показываем ошибку
+      String errorMessage = e.toString().replaceAll('Exception: ', '');
+
+      // Парсим ошибку для более понятного сообщения
+      if (errorMessage.contains('400')) {
+        errorMessage = 'Некорректные параметры поиска. Проверьте заполненные поля.';
+      } else if (errorMessage.contains('401')) {
+        errorMessage = 'Необходимо авторизоваться. Войдите в аккаунт.';
+      } else if (errorMessage.contains('500')) {
+        errorMessage = 'Ошибка сервера. Попробуйте позже.';
+      }
+
+      _showErrorDialog('Ошибка создания заявки', errorMessage);
     }
   }
 
+  /// Показать диалог ошибки (ИСПРАВЛЕНО: без overflow)
+  void _showErrorDialog(String title, String message) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(Icons.error_outline, color: Colors.red, size: 28.sp),
+            SizedBox(height: 8.h),
+            Text(
+              title,
+              style: TextStyle(fontSize: 16.sp),
+            ),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Text(
+            message,
+            style: TextStyle(fontSize: 14.sp),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
 
   Widget _buildHomeTab() {
     return Stack(
@@ -178,68 +279,6 @@ class _BookingSearchScreenState extends State<BookingSearchScreen> {
             onSearch: _performSearch,
           ),
         ),
-
-        // ------------------------ CONFIRM BUTTON ------------------------
-        if (_isSelectingLocation)
-          Positioned(
-            bottom: 80.h,
-            left: 0,
-            right: 0,
-            child: Center(
-              child: ElevatedButton(
-                onPressed: _confirmLocation,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF2853AF),
-                  padding: EdgeInsets.symmetric(horizontal: 48.w, vertical: 16.h),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(24.r),
-                  ),
-                ),
-                child: Text(
-                  "Подтвердить",
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 18.sp,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-            ),
-          ),
-
-        // ------------------------ USER LOCATION BUTTON ------------------------
-        // Only show when panel is collapsed (not expanded and not selecting location)
-        if (_panelState == PanelState.collapsed && !_isSelectingLocation)
-          Positioned(
-            right: 24.w,
-            bottom: 30.h,
-            child: GestureDetector(
-              onTap: _goToCurrentLocation,
-              child: Container(
-                width: 58.w,
-                height: 58.w,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF2853AF),
-                  shape: BoxShape.circle,
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.15),
-                      blurRadius: 10,
-                      offset: const Offset(0, 4),
-                    ),
-                  ],
-                ),
-                child: Center(
-                  child: SvgPicture.asset(
-                    'assets/icons/location_icon.svg',
-                    width: 28.w,
-                    height: 28.w,
-                    color: Colors.white,
-                  ),
-                ),
-              ),
-            ),
-          ),
       ],
     );
   }
