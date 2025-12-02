@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
-import 'package:http/http.dart' as http;
+import 'package:dio/dio.dart';
 import '../../core/constants/api_constants.dart';
 import '../models/auth/register_request.dart';
 import '../models/auth/register_response.dart';
@@ -8,34 +8,25 @@ import '../models/auth/login_request.dart';
 import '../models/auth/login_response.dart';
 import '../models/user/user_response.dart';
 import 'token_storage.dart';
+import 'dio_client.dart';
 
-/// 🔄 Enhanced Authentication API Service with Auto-Refresh
-///
-/// Features:
-/// 1. ⏰ Automatic token refresh every 13 minutes (before expiration)
-/// 2. 🔒 Prevents concurrent refresh requests
-/// 3. 🔄 Auto-refresh on app startup if token is about to expire
-/// 4. 🚫 Graceful logout on refresh failure
 class AuthApiService {
-  // ⬅️ Singleton pattern
   static final AuthApiService _instance = AuthApiService._internal();
   factory AuthApiService() => _instance;
   AuthApiService._internal();
 
-  // ⬅️ Auto-refresh timer
   Timer? _refreshTimer;
   bool _isRefreshing = false;
   final List<Completer<String?>> _refreshCompleters = [];
 
-  /// 🔄 Refresh access token using refresh token endpoint
-  ///
-  /// Returns new access token on success, null on failure
+  Dio get _dio => DioClient().dio;
+
+  /// 🔄 Refresh access token using cookies
   Future<String?> refreshAccessToken() async {
     print('🔄 [REFRESH] Attempting to refresh token...');
 
-    // Prevent concurrent refresh requests
     if (_isRefreshing) {
-      print('⏳ [REFRESH] Already refreshing, waiting for result...');
+      print('⏳ [REFRESH] Already refreshing, waiting...');
       final completer = Completer<String?>();
       _refreshCompleters.add(completer);
       return completer.future;
@@ -44,267 +35,225 @@ class AuthApiService {
     _isRefreshing = true;
 
     try {
-      final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.refreshEndpoint}');
+      print('📤 [REFRESH] POST ${ApiConstants.refreshEndpoint}');
+      print('🍪 [REFRESH] Cookies will be sent automatically by Dio');
 
-      print('📤 [REFRESH] POST $url');
-
-      final response = await http.post(
-        url,
-        headers: ApiConstants.headers,
-      ).timeout(ApiConstants.connectionTimeout);
+      // Отправляем запрос БЕЗ параметров
+      // Cookies с refreshToken отправляются автоматически!
+      final response = await _dio.post(
+        ApiConstants.refreshEndpoint,
+      );
 
       print('📥 [REFRESH] Status: ${response.statusCode}');
+      print('📥 [REFRESH] Response: ${response.data}');
 
       if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
+        final data = response.data;
 
-        // Extract tokens from response
-        final accessToken = data['accessToken'] as String;
-        final refreshToken = data['refreshToken'] as String?;
+        final newAccessToken = data['accessToken'] as String;
+        final newRefreshToken = data['refreshToken'] as String?;
         final tokenType = data['tokenType'] as String? ?? 'Bearer';
         final expiresIn = data['expiresIn'] as int? ?? 900;
 
-        // Save new tokens
+        print('✅ [REFRESH] Got new tokens');
+        print('   - accessToken length: ${newAccessToken.length}');
+        print('   - refreshToken: ${newRefreshToken != null ? 'updated' : 'same'}');
+
+        // Сохраняем только accessToken (refreshToken в cookie)
         await TokenStorage.saveToken(
-          accessToken: accessToken,
-          refreshToken: refreshToken,
+          accessToken: newAccessToken,
+          refreshToken: newRefreshToken ?? '',
           tokenType: tokenType,
           expiresIn: expiresIn,
         );
 
         print('✅ [REFRESH] Token refreshed successfully');
-        print('📝 [REFRESH] Expires in: $expiresIn seconds');
 
-        // Complete all waiting requests
-        for (var completer in _refreshCompleters) {
-          if (!completer.isCompleted) {
-            completer.complete(accessToken);
-          }
-        }
-        _refreshCompleters.clear();
+        _completeWaitingRequests(newAccessToken);
+        return newAccessToken;
 
-        return accessToken;
       } else {
         print('❌ [REFRESH] Failed: ${response.statusCode}');
-        print('Response: ${response.body}');
-
-        // Refresh failed - clear tokens and logout
-        await TokenStorage.clearAll();
-
-        // Complete all waiting requests with null
-        for (var completer in _refreshCompleters) {
-          if (!completer.isCompleted) {
-            completer.complete(null);
-          }
-        }
-        _refreshCompleters.clear();
-
+        _completeWaitingRequests(null);
         return null;
       }
-    } catch (e) {
-      print('❌ [REFRESH] Error: $e');
+    } on DioException catch (e) {
+      print('❌ [REFRESH] DioException: ${e.message}');
+      print('   Response: ${e.response?.data}');
 
-      // Complete all waiting requests with null
-      for (var completer in _refreshCompleters) {
-        if (!completer.isCompleted) {
-          completer.complete(null);
-        }
+      if (e.response?.statusCode == 401) {
+        print('🚪 [REFRESH] Refresh token expired, logging out');
+        await logout();
       }
-      _refreshCompleters.clear();
 
+      _completeWaitingRequests(null);
+      return null;
+    } catch (e, stackTrace) {
+      print('❌ [REFRESH] Error: $e');
+      print('   Stack: $stackTrace');
+      _completeWaitingRequests(null);
       return null;
     } finally {
       _isRefreshing = false;
     }
   }
 
-  /// ⏰ Start automatic token refresh timer
-  ///
-  /// Refreshes token every 13 minutes (780 seconds)
-  /// Token expires in 15 minutes (900 seconds), so we refresh 2 min before
-  void startAutoRefresh() {
-    stopAutoRefresh(); // Cancel existing timer
+  void _completeWaitingRequests(String? token) {
+    for (var completer in _refreshCompleters) {
+      if (!completer.isCompleted) {
+        completer.complete(token);
+      }
+    }
+    _refreshCompleters.clear();
+  }
 
-    print('⏰ [AUTO-REFRESH] Starting timer (every 13 minutes)');
+  Future<LoginResponse> login(LoginRequest request) async {
+    try {
+      print('📤 [LOGIN] POST ${ApiConstants.loginEndpoint}');
 
-    _refreshTimer = Timer.periodic(
-      const Duration(seconds: 780), // 13 minutes
-          (timer) async {
-        print('⏰ [AUTO-REFRESH] Timer triggered');
+      final response = await _dio.post(
+        ApiConstants.loginEndpoint,
+        data: request.toJson(),
+      );
+
+      print('📥 [LOGIN] Status: ${response.statusCode}');
+      print('🍪 [LOGIN] Cookies saved automatically by Dio');
+
+      if (response.statusCode == 200) {
+        final loginResponse = LoginResponse.fromJson(response.data);
+
+        print('💾 [STORAGE] Saving accessToken...');
+
+        await TokenStorage.saveToken(
+          accessToken: loginResponse.accessToken,
+          refreshToken: loginResponse.refreshToken,
+          tokenType: loginResponse.tokenType,
+          expiresIn: loginResponse.expiresIn,
+        );
+
+        print('✅ [LOGIN] Login successful');
+
+        startAutoRefresh();
+
+        return loginResponse;
+      } else {
+        throw Exception('Login failed: ${response.statusCode}');
+      }
+    } on DioException catch (e) {
+      print('❌ [LOGIN] Error: ${e.message}');
+      if (e.response?.statusCode == 401) {
+        throw Exception('Неверный email или пароль');
+      }
+      throw Exception('Ошибка входа');
+    }
+  }
+
+  Future<RegisterResponse> register(RegisterRequest request) async {
+    try {
+      print('📤 [REGISTER] POST ${ApiConstants.registerEndpoint}');
+
+      final response = await _dio.post(
+        ApiConstants.registerEndpoint,
+        data: request.toJson(),
+      );
+
+      print('📥 [REGISTER] Status: ${response.statusCode}');
+      print('🍪 [REGISTER] Cookies saved automatically by Dio');
+
+      if (response.statusCode == 201) {
+        final registerResponse = RegisterResponse.fromJson(response.data);
+
+        await TokenStorage.saveToken(
+          accessToken: registerResponse.accessToken,
+          refreshToken: registerResponse.refreshToken,
+          tokenType: registerResponse.tokenType,
+          expiresIn: registerResponse.expiresIn,
+        );
+
+        print('✅ [REGISTER] Registration successful');
+
+        startAutoRefresh();
+
+        return registerResponse;
+      } else {
+        throw Exception('Registration failed: ${response.statusCode}');
+      }
+    } on DioException catch (e) {
+      print('❌ [REGISTER] Error: ${e.message}');
+      throw Exception('Ошибка регистрации');
+    }
+  }
+
+  Future<UserResponse> getCurrentUser(String accessToken) async {
+    try {
+      print('📤 [GET USER] GET ${ApiConstants.currentUserEndpoint}');
+
+      final response = await _dio.get(
+        ApiConstants.currentUserEndpoint,
+        options: Options(
+          headers: {'Authorization': 'Bearer $accessToken'},
+        ),
+      );
+
+      print('📥 [GET USER] Status: ${response.statusCode}');
+
+      if (response.statusCode == 200) {
+        return UserResponse.fromJson(response.data);
+      } else {
+        throw Exception('Failed to get user');
+      }
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 401) {
+        print('⚠️ [GET USER] Token expired, refreshing...');
         final newToken = await refreshAccessToken();
+        if (newToken != null) {
+          return getCurrentUser(newToken);
+        }
+        throw Exception('Токен истек. Войдите снова.');
+      }
+      throw Exception('Ошибка загрузки данных');
+    }
+  }
 
+  Future<void> logout() async {
+    print('🚪 [LOGOUT] Logging out...');
+    stopAutoRefresh();
+    await TokenStorage.clearAll();
+    await DioClient().clearCookies();
+    print('✅ [LOGOUT] Logged out');
+  }
+
+  void startAutoRefresh() {
+    stopAutoRefresh();
+    print('⏰ [AUTO-REFRESH] Starting timer (every 13 minutes)');
+    _refreshTimer = Timer.periodic(
+      const Duration(seconds: 780),
+          (timer) async {
+        print('⏰ [AUTO-REFRESH] Refreshing...');
+        final newToken = await refreshAccessToken();
         if (newToken == null) {
-          print('❌ [AUTO-REFRESH] Failed to refresh - stopping timer');
+          print('❌ [AUTO-REFRESH] Failed, stopping');
           stopAutoRefresh();
+        } else {
+          print('✅ [AUTO-REFRESH] Success');
         }
       },
     );
   }
 
-  /// 🛑 Stop automatic token refresh timer
   void stopAutoRefresh() {
-    if (_refreshTimer != null) {
-      print('🛑 [AUTO-REFRESH] Stopping timer');
-      _refreshTimer?.cancel();
-      _refreshTimer = null;
-    }
+    _refreshTimer?.cancel();
+    _refreshTimer = null;
   }
 
-  /// 🚀 Initialize auto-refresh on app startup
-  ///
-  /// Call this when app starts to check if token needs refresh
   Future<void> initAutoRefresh() async {
     print('🚀 [INIT] Initializing auto-refresh...');
-
     final isLoggedIn = await TokenStorage.isLoggedIn();
-
     if (!isLoggedIn) {
-      print('❌ [INIT] User not logged in, skipping auto-refresh');
+      print('❌ [INIT] Not logged in');
       return;
     }
-
-    // Check if token is about to expire
-    final timeUntilExpiration = await TokenStorage.getTimeUntilExpiration();
-    print('📊 [INIT] Time until expiration: $timeUntilExpiration seconds');
-
-    if (timeUntilExpiration != null && timeUntilExpiration < 120) {
-      // Token expires in less than 2 minutes - refresh immediately
-      print('⚠️ [INIT] Token expires soon, refreshing now...');
-      await refreshAccessToken();
-    }
-
-    // Start auto-refresh timer
     startAutoRefresh();
-  }
-
-  /// 📝 Register new user
-  Future<RegisterResponse> register(RegisterRequest request) async {
-    try {
-      final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.registerEndpoint}');
-
-      print('📤 [REGISTER] POST $url');
-      print('Body: ${jsonEncode(request.toJson())}');
-
-      final response = await http
-          .post(
-        url,
-        headers: ApiConstants.headers,
-        body: jsonEncode(request.toJson()),
-      )
-          .timeout(ApiConstants.connectionTimeout);
-
-      print('📥 [REGISTER] Status: ${response.statusCode}');
-
-      if (response.statusCode == 201) {
-        final jsonResponse = jsonDecode(response.body);
-
-        // ⬅️ Start auto-refresh after registration
-        startAutoRefresh();
-
-        return RegisterResponse.fromJson(jsonResponse);
-      } else if (response.statusCode == 400) {
-        final errorData = jsonDecode(response.body);
-        final errorMessage = errorData['message'] ?? 'Ошибка регистрации';
-        throw Exception(errorMessage);
-      } else if (response.statusCode == 500) {
-        throw Exception('Ошибка сервера');
-      } else {
-        throw Exception('Ошибка регистрации: ${response.statusCode}');
-      }
-    } catch (e) {
-      if (e is Exception) rethrow;
-      throw Exception('Ошибка подключения');
-    }
-  }
-
-  /// 🔐 Login user
-  Future<LoginResponse> login(LoginRequest request) async {
-    try {
-      final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.loginEndpoint}');
-
-      print('📤 [LOGIN] POST $url');
-      print('Email: ${request.email}');
-
-      final response = await http
-          .post(
-        url,
-        headers: ApiConstants.headers,
-        body: jsonEncode(request.toJson()),
-      )
-          .timeout(ApiConstants.connectionTimeout);
-
-      print('📥 [LOGIN] Status: ${response.statusCode}');
-
-      if (response.statusCode == 200) {
-        final jsonResponse = jsonDecode(response.body);
-
-        // ⬅️ Start auto-refresh after login
-        startAutoRefresh();
-
-        return LoginResponse.fromJson(jsonResponse);
-      } else if (response.statusCode == 401) {
-        throw Exception('Неверный email или пароль');
-      } else if (response.statusCode == 500) {
-        throw Exception('Ошибка сервера');
-      } else {
-        throw Exception('Ошибка входа: ${response.statusCode}');
-      }
-    } catch (e) {
-      if (e is Exception) rethrow;
-      throw Exception('Ошибка подключения');
-    }
-  }
-
-  /// 👤 Get current user data
-  Future<UserResponse> getCurrentUser(String accessToken) async {
-    try {
-      final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.currentUserEndpoint}');
-
-      print('📤 [GET USER] GET $url');
-
-      final response = await http.get(
-        url,
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': '*/*',
-          'Authorization': 'Bearer $accessToken',
-        },
-      ).timeout(ApiConstants.connectionTimeout);
-
-      print('📥 [GET USER] Status: ${response.statusCode}');
-
-      if (response.statusCode == 200) {
-        final jsonResponse = jsonDecode(response.body);
-        return UserResponse.fromJson(jsonResponse);
-      } else if (response.statusCode == 401) {
-        // Token expired - try to refresh
-        print('⚠️ [GET USER] Token expired, refreshing...');
-        final newToken = await refreshAccessToken();
-
-        if (newToken != null) {
-          // Retry with new token
-          return getCurrentUser(newToken);
-        }
-
-        throw Exception('Токен истек');
-      } else if (response.statusCode == 403) {
-        throw Exception('Доступ запрещен');
-      } else if (response.statusCode == 500) {
-        throw Exception('Ошибка сервера');
-      } else {
-        throw Exception('Ошибка загрузки данных: ${response.statusCode}');
-      }
-    } catch (e) {
-      if (e is Exception) rethrow;
-      throw Exception('Ошибка подключения');
-    }
-  }
-
-  /// 🚪 Logout user
-  Future<void> logout() async {
-    print('🚪 [LOGOUT] Logging out...');
-    stopAutoRefresh();
-    await TokenStorage.clearAll();
-    print('✅ [LOGOUT] Logged out successfully');
+    print('✅ [INIT] Auto-refresh initialized');
   }
 }

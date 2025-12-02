@@ -14,9 +14,9 @@ class DistrictModel {
 
   factory DistrictModel.fromJson(Map<String, dynamic> json) {
     return DistrictModel(
-      id: json['id'] as int,
+      id: (json['id'] as num).toInt(),  // ⬅️ FIXED: безопасное приведение
       name: json['name'] as String,
-      cityId: json['cityId'] as int?,
+      cityId: json['cityId'] != null ? (json['cityId'] as num).toInt() : null,
     );
   }
 
@@ -43,7 +43,7 @@ class DictionaryItem {
 
   factory DictionaryItem.fromJson(Map<String, dynamic> json) {
     return DictionaryItem(
-      id: json['id'] as int,
+      id: (json['id'] as num).toInt(),  // ⬅️ FIXED: безопасное приведение
       key: json['key'] as String,
       value: json['value'] as String,
     );
@@ -141,20 +141,22 @@ class SearchRequest {
     required this.services,
     required this.conditions,
     required this.createdAt,
+
   });
 
   factory SearchRequest.fromJson(Map<String, dynamic> json) {
     return SearchRequest(
-      id: json['id'] as int,
-      authorId: json['authorId'] as int,
+      // ⬅️ FIXED: Безопасное приведение для всех числовых полей
+      id: (json['id'] as num).toInt(),
+      authorId: (json['authorId'] as num).toInt(),
       authorName: json['authorName'] as String,
       fromRating: json['fromRating'] != null ? (json['fromRating'] as num).toDouble() : null,
       toRating: json['toRating'] != null ? (json['toRating'] as num).toDouble() : null,
       checkInDate: json['checkInDate'] as String,
       checkOutDate: json['checkOutDate'] as String,
       oneNight: json['oneNight'] as bool,
-      price: json['price'] as int,
-      countOfPeople: json['countOfPeople'] as int,
+      price: (json['price'] as num).toInt(),
+      countOfPeople: (json['countOfPeople'] as num).toInt(),
       status: json['status'] as String,
       unitTypes: (json['unitTypes'] as List<dynamic>).map((e) => e as String).toList(),
       districts: (json['districts'] as List<dynamic>)

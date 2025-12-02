@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:intl/intl.dart';
 import '../../data/models/search/search_request_models.dart';
 import '../../data/services/search_request_api_service.dart';
+import '../../data/services/price_request_api_service.dart'; // ⬅️ ДОБАВЛЕНО
+import 'price_requests_screen.dart';
 
 /// Screen показывающий активную заявку на поиск жилья
 /// Отображается после успешного создания заявки
@@ -20,19 +23,21 @@ class ActiveSearchRequestScreen extends StatefulWidget {
 
 class _ActiveSearchRequestScreenState extends State<ActiveSearchRequestScreen> {
   final SearchRequestApiService _apiService = SearchRequestApiService();
+  final PriceRequestApiService _priceApiService = PriceRequestApiService(); // ⬅️ ДОБАВЛЕНО
 
   SearchRequest? _request;
   bool _isLoading = true;
   String? _error;
+  int _previousWaitingCount = 0; // ⬅️ ДОБАВЛЕНО: Счетчик предложений
 
   @override
   void initState() {
     super.initState();
-    _loadRequest();
+    _loadRequest(showToastForNewOffers: false); // ⬅️ ИЗМЕНЕНО: без тостера при первой загрузке
   }
 
   /// Загрузка заявки с сервера
-  Future<void> _loadRequest() async {
+  Future<void> _loadRequest({bool showToastForNewOffers = true}) async { // ⬅️ ИЗМЕНЕНО: параметр добавлен
     setState(() {
       _isLoading = true;
       _error = null;
@@ -40,6 +45,12 @@ class _ActiveSearchRequestScreenState extends State<ActiveSearchRequestScreen> {
 
     try {
       final request = await _apiService.getSearchRequestById(widget.requestId);
+
+      // ⬅️ ДОБАВЛЕНО: Проверяем количество новых предложений
+      if (showToastForNewOffers && _request != null) {
+        await _checkForNewOffers();
+      }
+
       setState(() {
         _request = request;
         _isLoading = false;
@@ -49,6 +60,305 @@ class _ActiveSearchRequestScreenState extends State<ActiveSearchRequestScreen> {
         _error = e.toString().replaceAll('Exception: ', '');
         _isLoading = false;
       });
+    }
+  }
+
+  /// ⬅️ НОВОЕ: Проверка новых предложений и показ тостера
+  Future<void> _checkForNewOffers() async {
+    try {
+      final priceRequests = await _priceApiService.getPriceRequestsBySearchRequest(
+        widget.requestId,
+      );
+
+      // Считаем предложения со статусом WAITING
+      final waitingCount = priceRequests
+          .where((pr) => pr.clientResponseStatus == 'WAITING')
+          .length;
+
+      // Если появились новые предложения - показываем тостер
+      if (waitingCount > _previousWaitingCount) {
+        final newOffersCount = waitingCount - _previousWaitingCount;
+
+        if (!mounted) return;
+
+        // ⬅️ ПРОСТОЙ ОРАНЖЕВЫЙ ТОСТЕР (как на скриншоте)
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                // Иконка часов
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.2),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(Icons.schedule, color: Colors.white, size: 20),
+                ),
+                SizedBox(width: 12),
+                // Текст
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        'Ожидает ответа',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 15,
+                          color: Colors.white,
+                        ),
+                      ),
+                      SizedBox(height: 4),
+                      Text(
+                        newOffersCount == 1
+                            ? 'Получено предложение от менеджера'
+                            : 'Получено $newOffersCount предложений',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: Colors.white.withOpacity(0.9),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            backgroundColor: Colors.orange,
+            duration: const Duration(seconds: 4),
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+            margin: EdgeInsets.only(
+              bottom: 80,
+              left: 16,
+              right: 16,
+            ),
+          ),
+        );
+      }
+
+      _previousWaitingCount = waitingCount;
+    } catch (e) {
+      print('❌ [CHECK OFFERS] Error: $e');
+    }
+  }
+
+  /// 💰 Изменение цены
+  Future<void> _updatePrice() async {
+    final TextEditingController priceController = TextEditingController(
+      text: _request!.price.toString(),
+    );
+
+    final newPrice = await showDialog<int>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: Colors.white,
+        title: Row(
+          children: [
+            Icon(Icons.attach_money, color: const Color(0xFF295CDB), size: 24.sp),
+            SizedBox(width: 8.w),
+            Text(
+              'Изменить цену',
+              style: TextStyle(
+                fontSize: 18.sp,
+                fontWeight: FontWeight.w700,
+                color: Colors.black87,
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Текущая цена: ${_request!.price} тг/ночь',
+              style: TextStyle(
+                fontSize: 14.sp,
+                color: Colors.grey.shade700,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            SizedBox(height: 16.h),
+            TextField(
+              controller: priceController,
+              keyboardType: TextInputType.number,
+              inputFormatters: [
+                FilteringTextInputFormatter.digitsOnly,
+              ],
+              style: TextStyle(
+                fontSize: 16.sp,
+                fontWeight: FontWeight.w600,
+                color: Colors.black87,
+              ),
+              decoration: InputDecoration(
+                labelText: 'Новая цена',
+                labelStyle: TextStyle(
+                  color: const Color(0xFF295CDB),
+                  fontWeight: FontWeight.w500,
+                ),
+                suffixText: 'тг/ночь',
+                suffixStyle: TextStyle(
+                  color: Colors.grey.shade700,
+                  fontWeight: FontWeight.w500,
+                ),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12.r),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12.r),
+                  borderSide: BorderSide(color: const Color(0xFF295CDB), width: 2),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12.r),
+                  borderSide: BorderSide(color: Colors.grey.shade400, width: 1.5),
+                ),
+              ),
+              autofocus: true,
+            ),
+            SizedBox(height: 12.h),
+            Container(
+              padding: EdgeInsets.all(12.w),
+              decoration: BoxDecoration(
+                color: Colors.blue.shade50,
+                borderRadius: BorderRadius.circular(8.r),
+                border: Border.all(
+                  color: Colors.blue.shade200,
+                  width: 1,
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.info_outline,
+                    size: 18.sp,
+                    color: const Color(0xFF295CDB),
+                  ),
+                  SizedBox(width: 8.w),
+                  Expanded(
+                    child: Text(
+                      'Можно изменить только цену. Другие параметры изменить нельзя.',
+                      style: TextStyle(
+                        fontSize: 12.sp,
+                        color: const Color(0xFF295CDB),
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, null),
+            child: Text(
+              'Отмена',
+              style: TextStyle(
+                color: Colors.grey.shade700,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final price = int.tryParse(priceController.text);
+              if (price != null && price > 0) {
+                Navigator.pop(context, price);
+              } else {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Введите корректную цену'),
+                    backgroundColor: Colors.orange,
+                  ),
+                );
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF295CDB),
+              foregroundColor: Colors.white,
+            ),
+            child: Text(
+              'Сохранить',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (newPrice == null || newPrice == _request!.price) return;
+
+    // Показываем loader
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => Center(
+        child: Container(
+          padding: EdgeInsets.all(24.w),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12.r),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(color: const Color(0xFF295CDB)),
+              SizedBox(height: 16.h),
+              Text(
+                'Обновляем цену...',
+                style: TextStyle(
+                  fontSize: 16.sp,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    try {
+      await _apiService.updateSearchRequestPrice(widget.requestId, newPrice);
+
+      if (!mounted) return;
+
+      // Закрываем loader
+      Navigator.pop(context);
+
+      // Показываем success
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Цена обновлена: $newPrice тг/ночь'),
+          backgroundColor: Colors.green,
+          duration: const Duration(seconds: 2),
+        ),
+      );
+
+      // Перезагружаем заявку
+      await _loadRequest();
+    } catch (e) {
+      if (!mounted) return;
+
+      // Закрываем loader
+      Navigator.pop(context);
+
+      // Показываем ошибку
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Ошибка: ${e.toString().replaceAll('Exception: ', '')}'),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 3),
+        ),
+      );
     }
   }
 
@@ -218,8 +528,8 @@ class _ActiveSearchRequestScreenState extends State<ActiveSearchRequestScreen> {
             SizedBox(height: 20.h),
           ],
 
-          // Cancel button
-          _buildCancelButton(),
+          // Action buttons
+          _buildActionButtons(),
           SizedBox(height: 40.h),
         ],
       ),
@@ -599,32 +909,106 @@ class _ActiveSearchRequestScreenState extends State<ActiveSearchRequestScreen> {
     );
   }
 
-  /// Cancel button
-  Widget _buildCancelButton() {
-    final canCancel = _request!.status == 'OPEN_TO_PRICE_REQUEST';
+  /// 🔘 Action buttons (Update Price + Cancel + View Offers)
+  Widget _buildActionButtons() {
+    final canModify = _request!.status == 'OPEN_TO_PRICE_REQUEST';
 
-    if (!canCancel) return const SizedBox.shrink();
+    if (!canModify) return const SizedBox.shrink();
 
-    return SizedBox(
-      width: double.infinity,
-      child: OutlinedButton(
-        onPressed: _cancelRequest,
-        style: OutlinedButton.styleFrom(
-          padding: EdgeInsets.symmetric(vertical: 14.h),
-          side: const BorderSide(color: Colors.red, width: 2),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12.r),
+    return Column(
+      children: [
+        // View Price Requests button
+        SizedBox(
+          width: double.infinity,
+          child: ElevatedButton.icon(
+            onPressed: () async {
+              // Navigate to Price Requests screen
+              await Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => PriceRequestsScreen(
+                    searchRequest: _request!,
+                  ),
+                ),
+              );
+              // ⬅️ ИЗМЕНЕНО: Reload с проверкой новых предложений
+              _loadRequest(showToastForNewOffers: true);
+            },
+            icon: Icon(Icons.local_offer, size: 20.sp, color: Colors.white),
+            label: Text(
+              'Посмотреть предложения',
+              style: TextStyle(
+                fontSize: 16.sp,
+                fontWeight: FontWeight.w600,
+                color: Colors.white,
+              ),
+            ),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.purple,
+              foregroundColor: Colors.white,
+              padding: EdgeInsets.symmetric(vertical: 14.h),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12.r),
+              ),
+            ),
           ),
         ),
-        child: Text(
-          'Отменить заявку',
-          style: TextStyle(
-            fontSize: 16.sp,
-            fontWeight: FontWeight.w600,
-            color: Colors.red,
+
+        SizedBox(height: 12.h),
+
+        // Update Price button
+        SizedBox(
+          width: double.infinity,
+          child: ElevatedButton.icon(
+            onPressed: _updatePrice,
+            icon: Icon(Icons.edit, size: 20.sp, color: Colors.white),
+            label: Text(
+              'Изменить цену',
+              style: TextStyle(
+                fontSize: 16.sp,
+                fontWeight: FontWeight.w600,
+                color: Colors.white,
+              ),
+            ),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF295CDB),
+              foregroundColor: Colors.white,
+              padding: EdgeInsets.symmetric(vertical: 14.h),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12.r),
+              ),
+            ),
           ),
         ),
-      ),
+
+        SizedBox(height: 12.h),
+
+        // Cancel button
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            onPressed: _cancelRequest,
+            icon: Icon(Icons.cancel, size: 20.sp, color: Colors.white),
+            label: Text(
+              'Отменить заявку',
+              style: TextStyle(
+                fontSize: 16.sp,
+                fontWeight: FontWeight.w600,
+                color: Colors.white,
+              ),
+            ),
+            style: OutlinedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+              padding: EdgeInsets.symmetric(vertical: 14.h),
+              side: const BorderSide(color: Colors.red, width: 2),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12.r),
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 

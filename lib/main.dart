@@ -3,11 +3,14 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'core/navigation/app_router.dart';
 import 'data/services/auth_api_service.dart';
+import 'data/services/dio_client.dart';
 
 /// 🚀 Main entry point with auto-refresh initialization
 void main() async {
   // Ensure Flutter is initialized
   WidgetsFlutterBinding.ensureInitialized();
+  await DioClient().init();
+
 
   // 🔄 Initialize auto-refresh on app startup
   await _initializeAutoRefresh();

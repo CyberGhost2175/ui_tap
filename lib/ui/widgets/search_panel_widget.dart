@@ -6,24 +6,82 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import '../../features/home/home_screen.dart';
 import 'package:table_calendar/table_calendar.dart';
-import '../../data/services/token_storage.dart'; // Import TokenStorage
+import '../../data/services/token_storage.dart';
+
+// ⬅️ 1. ДОБАВЬТЕ ЭТУ ФУНКЦИЮ В НАЧАЛО ФАЙЛА (после импортов)
+
+/// 🔍 Convert filter selection to API unitTypes array
+List<String> filterToUnitTypes(String filter) {
+  switch (filter) {
+    case 'Все':
+      return ['HOTEL_ROOM', 'APARTMENT']; // Оба типа
+    case 'Отель':
+      return ['HOTEL_ROOM']; // Только отели
+    case 'Квартира':
+      return ['APARTMENT']; // Только квартиры
+    default:
+      return ['HOTEL_ROOM', 'APARTMENT']; // По умолчанию - все
+  }
+}
+
+/// 🌍 Локализация районов (Английский → Русский)
+class DistrictLocalization {
+  // Алматы
+  static const Map<String, String> almatyDistricts = {
+    'Alatau': 'Алатауский',
+    'Almaly': 'Алмалинский',
+    'Auezov': 'Ауэзовский',
+    'Bostandyk': 'Бостандыкский',
+    'Zhetysu': 'Жетысуский',
+    'Medeu': 'Медеуский',
+    'Nauryzbay': 'Наурызбайский',
+    'Turksib': 'Турксибский',
+  };
+
+  // Астана
+  static const Map<String, String> astanaDistricts = {
+    'Almaty': 'Алматинский',
+    'Baikonur': 'Байконурский',
+    'Yesil': 'Есильский',
+    'Nurin': 'Нуринский',
+    'Saryarka': 'Сарыаркинский',
+  };
+
+  /// Получить русское название района
+  static String getRussianName(String englishName, int cityId) {
+    if (cityId == 1) {
+      // Алматы
+      return almatyDistricts[englishName] ?? englishName;
+    } else if (cityId == 2) {
+      // Астана
+      return astanaDistricts[englishName] ?? englishName;
+    }
+    return englishName;
+  }
+}
 
 /// District model from API
 class District {
   final int id;
-  final String name;
+  final String name; // Английское название из API
+  final String displayName; // Русское название для отображения
   final int? cityId;
 
   District({
     required this.id,
     required this.name,
+    required this.displayName,
     this.cityId,
   });
 
-  factory District.fromJson(Map<String, dynamic> json) {
+  factory District.fromJson(Map<String, dynamic> json, int cityId) {
+    final englishName = json['name'] as String;
+    final russianName = DistrictLocalization.getRussianName(englishName, cityId);
+
     return District(
       id: json['id'] as int,
-      name: json['name'] as String,
+      name: englishName, // Храним оригинальное английское название
+      displayName: russianName, // Русское название для UI
       cityId: json['cityId'] as int?,
     );
   }
@@ -104,29 +162,44 @@ class SearchPanelWidgetState extends State<SearchPanelWidget> {
   bool _isLoadingDistricts = false;
   int? get selectedDistrictId => _selectedDistrictId;
 
+  // ⬅️ ИСПРАВЛЕНО: Nullable вместо late
+  TextEditingController? _priceController;
+
   @override
   void initState() {
     super.initState();
-    // Set default city to Almaty
     _selectedCityId = 1;
     _selectedCityName = 'Алматы';
-    // Load districts for default city
     _loadDistricts(1);
+
+    // ⬅️ НОВОЕ: Инициализируем controller
+    _priceController = TextEditingController(text: widget.price);
   }
 
+  @override
+  void dispose() {
+    _priceController?.dispose();
+    super.dispose();
+  }
 
+  @override
+  void didUpdateWidget(SearchPanelWidget oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // ⬅️ НОВОЕ: Обновляем текст если price изменился извне
+    if (oldWidget.price != widget.price && _priceController != null) {
+      _priceController!.text = widget.price;
+    }
+  }
 
-  /// Get access token from TokenStorage (SharedPreferences)
+  /// Get access token from TokenStorage
   Future<String?> _getAccessToken() async {
     try {
-      // Use TokenStorage to get token from SharedPreferences
       final token = await TokenStorage.getAccessToken();
 
       if (token != null && token.isNotEmpty) {
         debugPrint('🔑 Token found in SharedPreferences');
         debugPrint('🔑 Token preview: ${token.substring(0, token.length > 20 ? 20 : token.length)}...');
 
-        // Check if token is expired
         final isExpired = await TokenStorage.isTokenExpired();
         if (isExpired) {
           debugPrint('⚠️ Token is expired! User needs to re-login.');
@@ -150,7 +223,6 @@ class SearchPanelWidgetState extends State<SearchPanelWidget> {
     setState(() => _isLoadingDistricts = true);
 
     try {
-      // Get token from storage
       final token = await _getAccessToken();
 
       if (token == null) {
@@ -172,16 +244,17 @@ class SearchPanelWidgetState extends State<SearchPanelWidget> {
 
       if (response.statusCode == 200) {
         final List<dynamic> data = json.decode(utf8.decode(response.bodyBytes));
-        final districts = data.map((json) => District.fromJson(json)).toList();
+        // ⬅️ ИЗМЕНЕНО: Передаем cityId для локализации
+        final districts = data.map((json) => District.fromJson(json, cityId)).toList();
 
         setState(() {
           _availableDistricts = districts;
           _isLoadingDistricts = false;
 
-          // Auto-select first district if available
           if (districts.isNotEmpty) {
-            _selectedDistrictId = districts[0].id;
-            _selectedDistrictName = districts[0].name;
+            // ⬅️ НОВОЕ: По умолчанию выбираем "Все районы"
+            _selectedDistrictId = -1; // -1 означает "Все районы"
+            _selectedDistrictName = 'Все районы';
           } else {
             _selectedDistrictId = null;
             _selectedDistrictName = '';
@@ -189,6 +262,7 @@ class SearchPanelWidgetState extends State<SearchPanelWidget> {
         });
 
         debugPrint('✅ Loaded ${districts.length} districts for city $cityId');
+        debugPrint('📍 First district: ${districts.isNotEmpty ? "${districts[0].name} → ${districts[0].displayName}" : "none"}');
       } else {
         debugPrint('❌ Failed to load districts: ${response.statusCode}');
         if (response.statusCode == 401) {
@@ -214,7 +288,6 @@ class SearchPanelWidgetState extends State<SearchPanelWidget> {
 
     return Stack(
       children: [
-        // Main panel
         Container(
           decoration: BoxDecoration(
             color: Colors.white,
@@ -235,7 +308,6 @@ class SearchPanelWidgetState extends State<SearchPanelWidget> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Header
                   Stack(
                     alignment: Alignment.center,
                     children: [
@@ -272,11 +344,9 @@ class SearchPanelWidgetState extends State<SearchPanelWidget> {
                     _buildCounter('Кол-во гостей', widget.adults, widget.onAdultsChanged, false),
                     SizedBox(height: 14.h),
 
-                    // City dropdown
                     _buildCityDropdown(context),
                     SizedBox(height: 10.h),
 
-                    // District dropdown
                     _buildDistrictDropdown(context),
                     SizedBox(height: 12.h),
 
@@ -316,7 +386,6 @@ class SearchPanelWidgetState extends State<SearchPanelWidget> {
           ),
         ),
 
-        // Transparent layer for tap on collapsed panel
         if (isCollapsed)
           Positioned.fill(
             child: GestureDetector(
@@ -329,7 +398,6 @@ class SearchPanelWidgetState extends State<SearchPanelWidget> {
     );
   }
 
-  // --- Date selection ---
   Widget _buildDates(BuildContext context) {
     final dateFormat = DateFormat('d MMM, yyyy', 'ru');
     return Column(
@@ -420,7 +488,10 @@ class SearchPanelWidgetState extends State<SearchPanelWidget> {
   }
 
   Future<void> _selectDate(BuildContext context, bool isCheckIn) async {
-    DateTime selectedDate = isCheckIn ? widget.checkIn : widget.checkOut;
+    // ⬅️ ИСПРАВЛЕНИЕ: Убедимся что selectedDate не раньше чем DateTime.now()
+    final now = DateTime.now();
+    final initialDate = isCheckIn ? widget.checkIn : widget.checkOut;
+    DateTime selectedDate = initialDate.isBefore(now) ? now : initialDate;
 
     await showDialog(
       context: context,
@@ -448,9 +519,9 @@ class SearchPanelWidgetState extends State<SearchPanelWidget> {
                   children: [
                     TableCalendar(
                       locale: 'ru_RU',
-                      firstDay: DateTime.now(),
-                      lastDay: DateTime.now().add(const Duration(days: 365)),
-                      focusedDay: selectedDate,
+                      firstDay: now, // ⬅️ Используем now
+                      lastDay: now.add(const Duration(days: 365)),
+                      focusedDay: selectedDate, // ⬅️ Теперь гарантированно >= firstDay
                       selectedDayPredicate: (day) =>
                           isSameDay(day, selectedDate),
                       onDaySelected: (selected, focused) {
@@ -556,7 +627,6 @@ class SearchPanelWidgetState extends State<SearchPanelWidget> {
     );
   }
 
-  // --- Counter ---
   Widget _buildCounter(
       String label, int value, Function(int) onChanged, bool allowZero) {
     return Padding(
@@ -627,7 +697,6 @@ class SearchPanelWidgetState extends State<SearchPanelWidget> {
     );
   }
 
-  // --- City dropdown ---
   Widget _buildCityDropdown(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -718,7 +787,6 @@ class SearchPanelWidgetState extends State<SearchPanelWidget> {
                       _selectedCityName = city.name;
                     });
                     Navigator.pop(context);
-                    // Load districts for selected city
                     _loadDistricts(city.id);
                   },
                   leading: Icon(
@@ -745,7 +813,6 @@ class SearchPanelWidgetState extends State<SearchPanelWidget> {
     );
   }
 
-  // --- District dropdown ---
   Widget _buildDistrictDropdown(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -865,15 +932,46 @@ class SearchPanelWidgetState extends State<SearchPanelWidget> {
                 constraints: BoxConstraints(maxHeight: 400.h),
                 child: ListView.builder(
                   shrinkWrap: true,
-                  itemCount: _availableDistricts.length,
+                  itemCount: _availableDistricts.length + 1, // ⬅️ +1 для "Все районы"
                   itemBuilder: (context, index) {
-                    final district = _availableDistricts[index];
+                    // ⬅️ НОВОЕ: Первый пункт - "Все районы"
+                    if (index == 0) {
+                      final isSelected = _selectedDistrictId == -1;
+                      return ListTile(
+                        onTap: () {
+                          setState(() {
+                            _selectedDistrictId = -1;
+                            _selectedDistrictName = 'Все районы';
+                          });
+                          Navigator.pop(context);
+                        },
+                        leading: Icon(
+                          isSelected
+                              ? Icons.radio_button_checked
+                              : Icons.radio_button_unchecked,
+                          color: const Color(0xFF2853AF),
+                        ),
+                        title: Text(
+                          'Все районы',
+                          style: TextStyle(
+                            fontSize: 15.sp,
+                            fontWeight:
+                            isSelected ? FontWeight.w700 : FontWeight.w500,
+                            color: Colors.black87,
+                          ),
+                        ),
+                      );
+                    }
+
+                    // Остальные районы
+                    final district = _availableDistricts[index - 1];
                     final isSelected = _selectedDistrictId == district.id;
                     return ListTile(
                       onTap: () {
                         setState(() {
                           _selectedDistrictId = district.id;
-                          _selectedDistrictName = district.name;
+                          // ⬅️ ИЗМЕНЕНО: Используем displayName (русское)
+                          _selectedDistrictName = district.displayName;
                         });
                         Navigator.pop(context);
                       },
@@ -884,7 +982,7 @@ class SearchPanelWidgetState extends State<SearchPanelWidget> {
                         color: const Color(0xFF2853AF),
                       ),
                       title: Text(
-                        district.name,
+                        district.displayName, // ⬅️ РУССКОЕ НАЗВАНИЕ
                         style: TextStyle(
                           fontSize: 15.sp,
                           fontWeight:
@@ -919,7 +1017,6 @@ class SearchPanelWidgetState extends State<SearchPanelWidget> {
       ),
       child: Stack(
         children: [
-          // --- ПЛАВНАЯ ПОДЛОЖКА ---
           AnimatedPositioned(
             duration: const Duration(milliseconds: 260),
             curve: Curves.easeInOut,
@@ -942,7 +1039,6 @@ class SearchPanelWidgetState extends State<SearchPanelWidget> {
             ),
           ),
 
-          // --- ТЕКСТ + КЛИК ---
           Row(
             children: items.map((i) {
               final sel = (i == widget.filter);
@@ -972,9 +1068,6 @@ class SearchPanelWidgetState extends State<SearchPanelWidget> {
     );
   }
 
-
-
-  // --- Price ---
   Widget _buildRecommendedPrice() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -987,7 +1080,6 @@ class SearchPanelWidgetState extends State<SearchPanelWidget> {
             color: Colors.black87,
           ),
         ),
-
       ],
     );
   }
@@ -1006,6 +1098,7 @@ class SearchPanelWidgetState extends State<SearchPanelWidget> {
         ],
       ),
       child: TextField(
+        controller: _priceController, // ⬅️ Nullable controller (безопасно)
         keyboardType: TextInputType.number,
         inputFormatters: [FilteringTextInputFormatter.digitsOnly],
         onChanged: widget.onPriceChanged,
@@ -1032,6 +1125,28 @@ class SearchPanelWidgetState extends State<SearchPanelWidget> {
     );
   }
 
+  // ⬅️ 2. ДОБАВЬТЕ ЭТОТ НОВЫЙ МЕТОД для получения unitTypes
+  /// Get unit types based on selected filter
+  List<String> getUnitTypes() {
+    return filterToUnitTypes(widget.filter);
+  }
+
+  /// ⬅️ НОВОЕ: Получить ID выбранных районов
+  /// Если выбрано "Все районы" (-1), возвращает все ID
+  /// Иначе возвращает только выбранный район
+  List<int> getSelectedDistrictIds() {
+    if (_selectedDistrictId == -1) {
+      // "Все районы" - возвращаем все ID
+      return _availableDistricts.map((d) => d.id).toList();
+    } else if (_selectedDistrictId != null) {
+      // Конкретный район
+      return [_selectedDistrictId!];
+    } else {
+      // Ничего не выбрано
+      return [];
+    }
+  }
+
   /// Get selected location data for search
   Map<String, dynamic> getSelectedLocation() {
     return {
@@ -1039,6 +1154,30 @@ class SearchPanelWidgetState extends State<SearchPanelWidget> {
       'cityName': _selectedCityName.isEmpty ? null : _selectedCityName,
       'districtId': _selectedDistrictId,
       'districtName': _selectedDistrictName.isEmpty ? null : _selectedDistrictName,
+      'districtIds': getSelectedDistrictIds(), // ⬅️ НОВОЕ
+    };
+  }
+
+  // ⬅️ 3. ДОБАВЬТЕ ЭТОТ НОВЫЙ МЕТОД для полных данных поиска
+  /// Get all search data ready for API request
+  Map<String, dynamic> getSearchData() {
+    final location = getSelectedLocation();
+    final unitTypes = getUnitTypes();
+
+    debugPrint('🔍 Selected filter: ${widget.filter}');
+    debugPrint('📋 Unit types: $unitTypes');
+
+    return {
+      'checkIn': widget.checkIn,
+      'checkOut': widget.checkOut,
+      'adults': widget.adults,
+      'price': widget.price,
+      'filter': widget.filter,
+      'unitTypes': unitTypes, // ⬅️ ГОТОВЫЙ МАССИВ ДЛЯ API
+      'cityId': location['cityId'],
+      'cityName': location['cityName'],
+      'districtId': location['districtId'],
+      'districtName': location['districtName'],
     };
   }
 }

@@ -5,6 +5,7 @@ import '../../data/models/search/search_request_models.dart';
 import '../../data/services/search_request_api_service.dart';
 import '../../ui/widgets/map_widget.dart';
 import '../../ui/widgets/search_panel_widget.dart';
+import '../../ui/widgets/active_request_card_widget.dart';
 import '../../ui/widgets/bottom_navigation_widget.dart';
 import '../bookings/bookings_screen.dart';
 import '../search/active_search_request_screen.dart';
@@ -32,12 +33,54 @@ class _BookingSearchScreenState extends State<BookingSearchScreen> {
   String _filter = 'Отель';
   DateTime _checkIn = DateTime.now();
   DateTime _checkOut = DateTime.now().add(const Duration(days: 1));
-  String _customPrice = '20000';
+  String _customPrice = ''; // ⬅️ ИСПРАВЛЕНО: Пустая строка по умолчанию
 
   bool _isSelectingLocation = false;
   final GlobalKey _mapKey = GlobalKey();
   final GlobalKey<SearchPanelWidgetState> _searchPanelKey =
   GlobalKey<SearchPanelWidgetState>();
+
+  // ⬅️ НОВОЕ: Активные заявки (список)
+  List<SearchRequest> _activeRequests = [];
+  bool _isLoadingActiveRequest = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadActiveRequest();
+  }
+
+  /// 📥 Загрузка всех активных заявок
+  Future<void> _loadActiveRequest() async {
+    setState(() => _isLoadingActiveRequest = true);
+
+    try {
+      final apiService = SearchRequestApiService();
+      final requests = await apiService.getAllSearchRequests(
+        page: 0,
+        size: 20, // Загружаем до 20 заявок
+        sortBy: 'id',
+        sortDirection: 'desc',
+      );
+
+      // Берём только активные заявки (не отменённые и не закрытые)
+      setState(() {
+        _activeRequests = requests;  // ← Все заявки (не фильтруем!)
+        _isLoadingActiveRequest = false;
+      });
+
+      print('✅ [HOME] My requests loaded: ${_activeRequests.length}');
+
+
+      print('✅ [HOME] Active requests loaded: ${_activeRequests.length}');
+    } catch (e) {
+      print('❌ [HOME] Error loading active requests: $e');
+      setState(() {
+        _activeRequests = [];
+        _isLoadingActiveRequest = false;
+      });
+    }
+  }
 
   void _handlePanelTap() {
     if (_panelState == PanelState.collapsed) {
@@ -63,6 +106,13 @@ class _BookingSearchScreenState extends State<BookingSearchScreen> {
   /// 🔍 Выполнение поиска с отправкой на бэкенд
   Future<void> _performSearch() async {
     print('🔍 [SEARCH] Starting search...');
+
+    // ⬅️ НОВОЕ: ВАЛИДАЦИЯ ВСЕХ ПОЛЕЙ
+    final validationError = _validateSearchFields();
+    if (validationError != null) {
+      _showValidationError(validationError);
+      return;
+    }
 
     // Показываем loader
     showDialog(
@@ -94,66 +144,46 @@ class _BookingSearchScreenState extends State<BookingSearchScreen> {
     );
 
     try {
-      // Получаем выбранные районы из search panel
+      // ⬅️ ИЗМЕНЕНО: Используем новый метод getSelectedDistrictIds()
       final searchPanelState = _searchPanelKey.currentState;
       List<int> selectedDistrictIds = [];
 
       if (searchPanelState != null) {
-        try {
-          // Попытка получить через геттер (если он добавлен)
-          final districtId = searchPanelState.selectedDistrictId;
-          if (districtId != null) {
-            selectedDistrictIds = [districtId];
-          }
-        } catch (e) {
-          // Если геттер не найден, используем дефолтные районы
-          print('⚠️ [SEARCH] selectedDistrictId getter not found, using default districts');
-          selectedDistrictIds = [1]; // Дефолтный район
-        }
+        selectedDistrictIds = searchPanelState.getSelectedDistrictIds();
       }
 
-      // Валидация - если районы не выбраны, используем дефолтный
+      // Эта проверка уже не нужна, т.к. валидация выше
       if (selectedDistrictIds.isEmpty) {
-        print('⚠️ [SEARCH] No districts selected, using default');
-        selectedDistrictIds = [1]; // Дефолтный район
-
-        // Показываем предупреждение, но НЕ блокируем поиск
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('Район не выбран, используем район по умолчанию'),
-            backgroundColor: Colors.orange,
-            duration: const Duration(seconds: 2),
-          ),
-        );
+        print('⚠️ [SEARCH] No districts selected after validation - should not happen');
+        selectedDistrictIds = [1];
       }
 
-      // Форматируем даты в формате "yyyy-MM-dd"
       final checkInDate = DateFormat('yyyy-MM-dd').format(_checkIn);
       final checkOutDate = DateFormat('yyyy-MM-dd').format(_checkOut);
-
-      // Парсим цену
       final price = int.tryParse(_customPrice.replaceAll(RegExp(r'[^\d]'), '')) ?? 20000;
 
-      // Определяем тип жилья
-      final unitTypes = _filter == 'Отель' ? ['HOTEL_ROOM'] : ['APARTMENT'];
+      // ⬅️ ИЗМЕНЕНО: Правильная конвертация фильтра
+      final unitTypes = _filter == 'Все'
+          ? ['HOTEL_ROOM', 'APARTMENT']
+          : _filter == 'Отель'
+          ? ['HOTEL_ROOM']
+          : ['APARTMENT'];
 
-      // Создаем запрос
       final request = SearchRequestCreate(
         checkInDate: checkInDate,
         checkOutDate: checkOutDate,
         oneNight: _checkOut.difference(_checkIn).inDays == 1,
         price: price,
         countOfPeople: _adults + _children,
-        fromRating: 4, // По умолчанию
-        toRating: 5,   // По умолчанию
+        fromRating: 4,
+        toRating: 5,
         unitTypes: unitTypes,
         districtIds: selectedDistrictIds,
-        // serviceDictionaryIds и conditionDictionaryIds опциональны
       );
 
       print('📤 [SEARCH] Request: ${request.toJson()}');
+      print('📍 [SEARCH] Districts: $selectedDistrictIds (${selectedDistrictIds.length} districts)');
 
-      // Отправляем запрос
       final apiService = SearchRequestApiService();
       final result = await apiService.createSearchRequest(request);
 
@@ -162,8 +192,8 @@ class _BookingSearchScreenState extends State<BookingSearchScreen> {
       // Закрываем loader
       Navigator.pop(context);
 
-      // Показываем экран с заявкой
-      Navigator.push(
+      // ⬅️ ИЗМЕНЕНО: Показываем заявку, а затем возвращаемся на главный
+      await Navigator.push(
         context,
         MaterialPageRoute(
           builder: (context) => ActiveSearchRequestScreen(
@@ -171,16 +201,20 @@ class _BookingSearchScreenState extends State<BookingSearchScreen> {
           ),
         ),
       );
+
+      // ⬅️ НОВОЕ: После возврата обновляем активную заявку и сворачиваем панель
+      setState(() {
+        _panelState = PanelState.collapsed;
+      });
+      await _loadActiveRequest();
+
     } catch (e) {
       print('❌ [SEARCH] Error: $e');
 
-      // Закрываем loader
       Navigator.pop(context);
 
-      // Показываем ошибку
       String errorMessage = e.toString().replaceAll('Exception: ', '');
 
-      // Парсим ошибку для более понятного сообщения
       if (errorMessage.contains('400')) {
         errorMessage = 'Некорректные параметры поиска. Проверьте заполненные поля.';
       } else if (errorMessage.contains('401')) {
@@ -193,7 +227,131 @@ class _BookingSearchScreenState extends State<BookingSearchScreen> {
     }
   }
 
-  /// Показать диалог ошибки (ИСПРАВЛЕНО: без overflow)
+  /// ⬅️ НОВОЕ: Валидация полей поиска
+  String? _validateSearchFields() {
+    // 1. Даты
+    if (_checkIn.isBefore(DateTime.now().subtract(const Duration(days: 1)))) {
+      return 'Дата заезда не может быть в прошлом';
+    }
+    if (_checkOut.isBefore(_checkIn) || _checkOut.isAtSameMomentAs(_checkIn)) {
+      return 'Дата выезда должна быть позже даты заезда';
+    }
+
+    // 2. Количество людей
+    if (_adults < 1) {
+      return 'Укажите количество взрослых (минимум 1)';
+    }
+    if (_adults + _children > 10) {
+      return 'Максимальное количество гостей: 10 человек';
+    }
+
+    // 3. Город
+    final searchPanelState = _searchPanelKey.currentState;
+    if (searchPanelState == null) {
+      return 'Ошибка: панель поиска не инициализирована';
+    }
+
+    final location = searchPanelState.getSelectedLocation();
+    if (location['cityId'] == null) {
+      return 'Выберите город';
+    }
+
+    // 4. Район
+    if (location['districtId'] == null) {
+      return 'Выберите район';
+    }
+
+    final districtIds = location['districtIds'] as List<int>?;
+    if (districtIds == null || districtIds.isEmpty) {
+      return 'Выберите район';
+    }
+
+    // 5. Тип размещения
+    if (_filter.isEmpty) {
+      return 'Выберите тип размещения';
+    }
+
+    // 6. Цена
+    if (_customPrice.isEmpty) {
+      return 'Укажите цену за ночь';
+    }
+
+    final price = int.tryParse(_customPrice.replaceAll(RegExp(r'[^\d]'), ''));
+    if (price == null || price <= 0) {
+      return 'Укажите корректную цену (больше 0)';
+    }
+
+    if (price < 1000) {
+      return 'Минимальная цена: 1 000 тг/ночь';
+    }
+
+    if (price > 1000000) {
+      return 'Максимальная цена: 1 000 000 тг/ночь';
+    }
+
+    // Всё ОК
+    return null;
+  }
+
+  /// ⬅️ НОВОЕ: Показать ошибку валидации
+  void _showValidationError(String message) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16.r),
+        ),
+        title: Row(
+          children: [
+            Icon(
+              Icons.warning_amber_rounded,
+              color: Colors.orange,
+              size: 28.sp,
+            ),
+            SizedBox(width: 12.w),
+            Expanded(
+              child: Text(
+                'Заполните все поля',
+                style: TextStyle(
+                  fontSize: 18.sp,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.black87,
+                ),
+              ),
+            ),
+          ],
+        ),
+        content: Text(
+          message,
+          style: TextStyle(
+            fontSize: 15.sp,
+            color: Colors.black87,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            style: TextButton.styleFrom(
+              backgroundColor: const Color(0xFF295CDB),
+              foregroundColor: Colors.white,
+              padding: EdgeInsets.symmetric(horizontal: 24.w, vertical: 12.h),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8.r),
+              ),
+            ),
+            child: Text(
+              'Понятно',
+              style: TextStyle(
+                fontWeight: FontWeight.w600,
+                color: Colors.white,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _showErrorDialog(String title, String message) {
     showDialog(
       context: context,
@@ -243,6 +401,31 @@ class _BookingSearchScreenState extends State<BookingSearchScreen> {
             setState(() => _panelState = _previousPanelState ?? PanelState.collapsed);
           },
         ),
+
+        // ------------------------ ACTIVE REQUESTS LIST ------------------------
+        // ⬅️ НОВОЕ: Горизонтальный список активных заявок
+        if (_activeRequests.isNotEmpty && _panelState == PanelState.collapsed)
+          Positioned(
+            bottom: 230.h, // ⬅️ Поднял выше (было 180)
+            left: 0,
+            right: 0,
+            height: 210.h, // ⬅️ Увеличил высоту (было 195)
+            child: ListView.builder(
+              scrollDirection: Axis.horizontal,
+              padding: EdgeInsets.symmetric(horizontal: 8.w),
+              itemCount: _activeRequests.length,
+              itemBuilder: (context, index) {
+                return SizedBox(
+                  width: 340.w,
+                  height: 180.h, // ⬅️ ДОБАВИЛ фиксированную высоту
+                  child: ActiveRequestCardWidget(
+                    request: _activeRequests[index],
+                    onRefresh: _loadActiveRequest,
+                  ),
+                );
+              },
+            ),
+          ),
 
         // ------------------------ SEARCH PANEL ------------------------
         AnimatedPositioned(
