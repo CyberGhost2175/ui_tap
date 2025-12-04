@@ -8,25 +8,22 @@ import '../../features/home/home_screen.dart';
 import 'package:table_calendar/table_calendar.dart';
 import '../../data/services/token_storage.dart';
 
-// ⬅️ 1. ДОБАВЬТЕ ЭТУ ФУНКЦИЮ В НАЧАЛО ФАЙЛА (после импортов)
-
 /// 🔍 Convert filter selection to API unitTypes array
 List<String> filterToUnitTypes(String filter) {
   switch (filter) {
     case 'Все':
-      return ['HOTEL_ROOM', 'APARTMENT']; // Оба типа
+      return ['HOTEL_ROOM', 'APARTMENT'];
     case 'Отель':
-      return ['HOTEL_ROOM']; // Только отели
+      return ['HOTEL_ROOM'];
     case 'Квартира':
-      return ['APARTMENT']; // Только квартиры
+      return ['APARTMENT'];
     default:
-      return ['HOTEL_ROOM', 'APARTMENT']; // По умолчанию - все
+      return ['HOTEL_ROOM', 'APARTMENT'];
   }
 }
 
 /// 🌍 Локализация районов (Английский → Русский)
 class DistrictLocalization {
-  // Алматы
   static const Map<String, String> almatyDistricts = {
     'Alatau': 'Алатауский',
     'Almaly': 'Алмалинский',
@@ -38,7 +35,6 @@ class DistrictLocalization {
     'Turksib': 'Турксибский',
   };
 
-  // Астана
   static const Map<String, String> astanaDistricts = {
     'Almaty': 'Алматинский',
     'Baikonur': 'Байконурский',
@@ -47,13 +43,10 @@ class DistrictLocalization {
     'Saryarka': 'Сарыаркинский',
   };
 
-  /// Получить русское название района
   static String getRussianName(String englishName, int cityId) {
     if (cityId == 1) {
-      // Алматы
       return almatyDistricts[englishName] ?? englishName;
     } else if (cityId == 2) {
-      // Астана
       return astanaDistricts[englishName] ?? englishName;
     }
     return englishName;
@@ -63,26 +56,40 @@ class DistrictLocalization {
 /// District model from API
 class District {
   final int id;
-  final String name; // Английское название из API
-  final String displayName; // Русское название для отображения
+  final String name;
+  final String displayName;
   final int? cityId;
+  final int? averagePrice; // ⬅️ Храним как int для удобства
 
   District({
     required this.id,
     required this.name,
     required this.displayName,
     this.cityId,
+    this.averagePrice,
   });
 
   factory District.fromJson(Map<String, dynamic> json, int cityId) {
     final englishName = json['name'] as String;
     final russianName = DistrictLocalization.getRussianName(englishName, cityId);
 
+    // ⬅️ FIXED: API возвращает double, конвертируем в int
+    int? avgPrice;
+    if (json['averagePrice'] != null) {
+      final rawPrice = json['averagePrice'];
+      if (rawPrice is int) {
+        avgPrice = rawPrice;
+      } else if (rawPrice is double) {
+        avgPrice = rawPrice.round(); // ⬅️ Округляем double до int
+      }
+    }
+
     return District(
       id: json['id'] as int,
-      name: englishName, // Храним оригинальное английское название
-      displayName: russianName, // Русское название для UI
+      name: englishName,
+      displayName: russianName,
       cityId: json['cityId'] as int?,
+      averagePrice: avgPrice, // ⬅️ Безопасная конвертация
     );
   }
 }
@@ -150,7 +157,6 @@ class SearchPanelWidget extends StatefulWidget {
 }
 
 class SearchPanelWidgetState extends State<SearchPanelWidget> {
-  // API Configuration
   static const String baseUrl = 'http://63.178.189.113:8888/api';
 
   int? _selectedCityId;
@@ -162,7 +168,6 @@ class SearchPanelWidgetState extends State<SearchPanelWidget> {
   bool _isLoadingDistricts = false;
   int? get selectedDistrictId => _selectedDistrictId;
 
-  // ⬅️ ИСПРАВЛЕНО: Nullable вместо late
   TextEditingController? _priceController;
 
   @override
@@ -171,8 +176,6 @@ class SearchPanelWidgetState extends State<SearchPanelWidget> {
     _selectedCityId = 1;
     _selectedCityName = 'Алматы';
     _loadDistricts(1);
-
-    // ⬅️ НОВОЕ: Инициализируем controller
     _priceController = TextEditingController(text: widget.price);
   }
 
@@ -185,48 +188,35 @@ class SearchPanelWidgetState extends State<SearchPanelWidget> {
   @override
   void didUpdateWidget(SearchPanelWidget oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // ⬅️ НОВОЕ: Обновляем текст если price изменился извне
     if (oldWidget.price != widget.price && _priceController != null) {
       _priceController!.text = widget.price;
     }
   }
 
-  /// Get access token from TokenStorage
   Future<String?> _getAccessToken() async {
     try {
       final token = await TokenStorage.getAccessToken();
-
       if (token != null && token.isNotEmpty) {
-        debugPrint('🔑 Token found in SharedPreferences');
-        debugPrint('🔑 Token preview: ${token.substring(0, token.length > 20 ? 20 : token.length)}...');
-
         final isExpired = await TokenStorage.isTokenExpired();
-        if (isExpired) {
-          debugPrint('⚠️ Token is expired! User needs to re-login.');
-          return null;
-        }
-
+        if (isExpired) return null;
         return token;
-      } else {
-        debugPrint('⚠️ No token found in SharedPreferences');
-        debugPrint('📋 User needs to login first');
-        return null;
       }
+      return null;
     } catch (e) {
-      debugPrint('❌ Error reading token from TokenStorage: $e');
       return null;
     }
   }
 
-  /// Load districts from API
   Future<void> _loadDistricts(int cityId) async {
+    debugPrint('📍 [DISTRICTS] Loading districts for city $cityId...');
+
     setState(() => _isLoadingDistricts = true);
 
     try {
       final token = await _getAccessToken();
 
       if (token == null) {
-        debugPrint('❌ Cannot load districts: No access token');
+        debugPrint('❌ [DISTRICTS] No token available');
         setState(() {
           _availableDistricts = [];
           _isLoadingDistricts = false;
@@ -242,43 +232,96 @@ class SearchPanelWidgetState extends State<SearchPanelWidget> {
         },
       );
 
+      debugPrint('📡 [DISTRICTS] Response status: ${response.statusCode}');
+
       if (response.statusCode == 200) {
         final List<dynamic> data = json.decode(utf8.decode(response.bodyBytes));
-        // ⬅️ ИЗМЕНЕНО: Передаем cityId для локализации
         final districts = data.map((json) => District.fromJson(json, cityId)).toList();
+
+        debugPrint('✅ [DISTRICTS] Loaded ${districts.length} districts for city $cityId');
+
+        // ⬅️ DEBUG: Выводим первые 3 района
+        for (var i = 0; i < districts.length && i < 3; i++) {
+          debugPrint('   District ${districts[i].id}: ${districts[i].displayName} (avg: ${districts[i].averagePrice})');
+        }
 
         setState(() {
           _availableDistricts = districts;
           _isLoadingDistricts = false;
 
-          if (districts.isNotEmpty) {
-            // ⬅️ НОВОЕ: По умолчанию выбираем "Все районы"
-            _selectedDistrictId = -1; // -1 означает "Все районы"
+          // ⬅️ FIXED: Выбираем "Все районы" только если район еще не выбран
+          if (_selectedDistrictId == null) {
+            _selectedDistrictId = -1;
             _selectedDistrictName = 'Все районы';
+            debugPrint('🏘️ [DISTRICTS] Auto-selected: Все районы');
           } else {
-            _selectedDistrictId = null;
-            _selectedDistrictName = '';
+            debugPrint('🏘️ [DISTRICTS] Keeping current selection: $_selectedDistrictName');
           }
         });
-
-        debugPrint('✅ Loaded ${districts.length} districts for city $cityId');
-        debugPrint('📍 First district: ${districts.isNotEmpty ? "${districts[0].name} → ${districts[0].displayName}" : "none"}');
       } else {
-        debugPrint('❌ Failed to load districts: ${response.statusCode}');
-        if (response.statusCode == 401) {
-          debugPrint('⚠️ Token expired or invalid. Please re-login.');
-        }
+        debugPrint('❌ [DISTRICTS] Failed: ${response.statusCode}');
         setState(() {
           _availableDistricts = [];
           _isLoadingDistricts = false;
         });
       }
     } catch (e) {
-      debugPrint('❌ Error loading districts: $e');
+      debugPrint('❌ [DISTRICTS] Exception: $e');
       setState(() {
         _availableDistricts = [];
         _isLoadingDistricts = false;
       });
+    }
+  }
+
+  /// ⬅️ FIXED: Получить рекомендуемую цену для выбранного района
+  int? _getRecommendedPrice() {
+    debugPrint('💰 [PRICE] Getting recommended price...');
+    debugPrint('   Selected district ID: $_selectedDistrictId');
+    debugPrint('   Available districts: ${_availableDistricts.length}');
+
+    // Проверяем что список районов не пустой
+    if (_availableDistricts.isEmpty) {
+      debugPrint('   ⚠️ No districts available');
+      return null;
+    }
+
+    if (_selectedDistrictId == -1 || _selectedDistrictId == null) {
+      // "Все районы" или не выбрано - берём среднюю цену по всем районам
+      debugPrint('   Mode: Average price (All districts)');
+
+      final prices = _availableDistricts
+          .where((d) => d.averagePrice != null)
+          .map((d) => d.averagePrice!)
+          .toList();
+
+      debugPrint('   Found ${prices.length} districts with prices');
+
+      if (prices.isEmpty) {
+        debugPrint('   ⚠️ No prices available');
+        return null;
+      }
+
+      final sum = prices.reduce((a, b) => a + b);
+      final avg = (sum / prices.length).round();
+      debugPrint('   ✅ Average price: $avg тг');
+      return avg;
+    } else {
+      // Конкретный район - берём его цену
+      debugPrint('   Mode: Specific district price');
+
+      try {
+        final district = _availableDistricts.firstWhere(
+              (d) => d.id == _selectedDistrictId,
+        );
+        debugPrint('   Found district: ${district.displayName}');
+        debugPrint('   Price: ${district.averagePrice} тг');
+        return district.averagePrice;
+      } catch (e) {
+        // Если район не найден, возвращаем null
+        debugPrint('   ⚠️ District not found: $_selectedDistrictId');
+        return null;
+      }
     }
   }
 
@@ -352,7 +395,7 @@ class SearchPanelWidgetState extends State<SearchPanelWidget> {
 
                     _buildFilter(),
                     SizedBox(height: 14.h),
-                    _buildRecommendedPrice(),
+                    _buildRecommendedPrice(), // ⬅️ ОБНОВЛЕНО
                     SizedBox(height: 10.h),
                     _buildPriceInput(),
                   ],
@@ -488,7 +531,6 @@ class SearchPanelWidgetState extends State<SearchPanelWidget> {
   }
 
   Future<void> _selectDate(BuildContext context, bool isCheckIn) async {
-    // ⬅️ ИСПРАВЛЕНИЕ: Убедимся что selectedDate не раньше чем DateTime.now()
     final now = DateTime.now();
     final initialDate = isCheckIn ? widget.checkIn : widget.checkOut;
     DateTime selectedDate = initialDate.isBefore(now) ? now : initialDate;
@@ -519,9 +561,9 @@ class SearchPanelWidgetState extends State<SearchPanelWidget> {
                   children: [
                     TableCalendar(
                       locale: 'ru_RU',
-                      firstDay: now, // ⬅️ Используем now
+                      firstDay: now,
                       lastDay: now.add(const Duration(days: 365)),
-                      focusedDay: selectedDate, // ⬅️ Теперь гарантированно >= firstDay
+                      focusedDay: selectedDate,
                       selectedDayPredicate: (day) =>
                           isSameDay(day, selectedDate),
                       onDaySelected: (selected, focused) {
@@ -781,13 +823,23 @@ class SearchPanelWidgetState extends State<SearchPanelWidget> {
               ...Cities.all.map((city) {
                 final isSelected = _selectedCityId == city.id;
                 return ListTile(
-                  onTap: () {
+                  onTap: () async {
+                    // ⬅️ FIXED: Используем async и await
+                    Navigator.pop(context); // Сначала закрываем bottom sheet
+
                     setState(() {
                       _selectedCityId = city.id;
                       _selectedCityName = city.name;
+                      // ⬅️ FIXED: Сбрасываем район при смене города
+                      _selectedDistrictId = null;
+                      _selectedDistrictName = '';
                     });
-                    Navigator.pop(context);
-                    _loadDistricts(city.id);
+
+                    // ⬅️ FIXED: Загружаем районы ПОСЛЕ обновления UI
+                    await _loadDistricts(city.id);
+
+                    debugPrint('🏙️ City changed to: ${city.name} (id: ${city.id})');
+                    debugPrint('📍 Districts loaded: ${_availableDistricts.length}');
                   },
                   leading: Icon(
                     isSelected
@@ -932,9 +984,8 @@ class SearchPanelWidgetState extends State<SearchPanelWidget> {
                 constraints: BoxConstraints(maxHeight: 400.h),
                 child: ListView.builder(
                   shrinkWrap: true,
-                  itemCount: _availableDistricts.length + 1, // ⬅️ +1 для "Все районы"
+                  itemCount: _availableDistricts.length + 1,
                   itemBuilder: (context, index) {
-                    // ⬅️ НОВОЕ: Первый пункт - "Все районы"
                     if (index == 0) {
                       final isSelected = _selectedDistrictId == -1;
                       return ListTile(
@@ -963,14 +1014,12 @@ class SearchPanelWidgetState extends State<SearchPanelWidget> {
                       );
                     }
 
-                    // Остальные районы
                     final district = _availableDistricts[index - 1];
                     final isSelected = _selectedDistrictId == district.id;
                     return ListTile(
                       onTap: () {
                         setState(() {
                           _selectedDistrictId = district.id;
-                          // ⬅️ ИЗМЕНЕНО: Используем displayName (русское)
                           _selectedDistrictName = district.displayName;
                         });
                         Navigator.pop(context);
@@ -982,7 +1031,7 @@ class SearchPanelWidgetState extends State<SearchPanelWidget> {
                         color: const Color(0xFF2853AF),
                       ),
                       title: Text(
-                        district.displayName, // ⬅️ РУССКОЕ НАЗВАНИЕ
+                        district.displayName,
                         style: TextStyle(
                           fontSize: 15.sp,
                           fontWeight:
@@ -1068,7 +1117,10 @@ class SearchPanelWidgetState extends State<SearchPanelWidget> {
     );
   }
 
+  /// ⬅️ ОБНОВЛЕНО: Показываем рекомендуемую цену серым текстом
   Widget _buildRecommendedPrice() {
+    final recommendedPrice = _getRecommendedPrice();
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1080,6 +1132,17 @@ class SearchPanelWidgetState extends State<SearchPanelWidget> {
             color: Colors.black87,
           ),
         ),
+        if (recommendedPrice != null) ...[
+          SizedBox(height: 4.h),
+          Text(
+            'Рекомендуемая цена в районе: ${NumberFormat('#,###', 'ru').format(recommendedPrice)} тг/ночь',
+            style: TextStyle(
+              fontSize: 12.sp,
+              color: Colors.grey.shade600, // ⬅️ Серый цвет
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
       ],
     );
   }
@@ -1098,7 +1161,7 @@ class SearchPanelWidgetState extends State<SearchPanelWidget> {
         ],
       ),
       child: TextField(
-        controller: _priceController, // ⬅️ Nullable controller (безопасно)
+        controller: _priceController,
         keyboardType: TextInputType.number,
         inputFormatters: [FilteringTextInputFormatter.digitsOnly],
         onChanged: widget.onPriceChanged,
@@ -1125,47 +1188,33 @@ class SearchPanelWidgetState extends State<SearchPanelWidget> {
     );
   }
 
-  // ⬅️ 2. ДОБАВЬТЕ ЭТОТ НОВЫЙ МЕТОД для получения unitTypes
-  /// Get unit types based on selected filter
   List<String> getUnitTypes() {
     return filterToUnitTypes(widget.filter);
   }
 
-  /// ⬅️ НОВОЕ: Получить ID выбранных районов
-  /// Если выбрано "Все районы" (-1), возвращает все ID
-  /// Иначе возвращает только выбранный район
   List<int> getSelectedDistrictIds() {
     if (_selectedDistrictId == -1) {
-      // "Все районы" - возвращаем все ID
       return _availableDistricts.map((d) => d.id).toList();
     } else if (_selectedDistrictId != null) {
-      // Конкретный район
       return [_selectedDistrictId!];
     } else {
-      // Ничего не выбрано
       return [];
     }
   }
 
-  /// Get selected location data for search
   Map<String, dynamic> getSelectedLocation() {
     return {
       'cityId': _selectedCityId,
       'cityName': _selectedCityName.isEmpty ? null : _selectedCityName,
       'districtId': _selectedDistrictId,
       'districtName': _selectedDistrictName.isEmpty ? null : _selectedDistrictName,
-      'districtIds': getSelectedDistrictIds(), // ⬅️ НОВОЕ
+      'districtIds': getSelectedDistrictIds(),
     };
   }
 
-  // ⬅️ 3. ДОБАВЬТЕ ЭТОТ НОВЫЙ МЕТОД для полных данных поиска
-  /// Get all search data ready for API request
   Map<String, dynamic> getSearchData() {
     final location = getSelectedLocation();
     final unitTypes = getUnitTypes();
-
-    debugPrint('🔍 Selected filter: ${widget.filter}');
-    debugPrint('📋 Unit types: $unitTypes');
 
     return {
       'checkIn': widget.checkIn,
@@ -1173,7 +1222,7 @@ class SearchPanelWidgetState extends State<SearchPanelWidget> {
       'adults': widget.adults,
       'price': widget.price,
       'filter': widget.filter,
-      'unitTypes': unitTypes, // ⬅️ ГОТОВЫЙ МАССИВ ДЛЯ API
+      'unitTypes': unitTypes,
       'cityId': location['cityId'],
       'cityName': location['cityName'],
       'districtId': location['districtId'],

@@ -1,100 +1,119 @@
-/// Models for Price Request (предложения цен от менеджеров)
+/// Models for Price Request API
 
-/// Price Request - предложение цены от менеджера
+/// ⬅️ FIXED: Nullable поля для безопасного парсинга
 class PriceRequest {
   final int id;
   final int searchRequestId;
-  final int accommodationUnitId;
-  final String accommodationUnitName;
-  final String accommodationName;
+  final int? managerId;  // ⬅️ Nullable
+  final String? managerName;  // ⬅️ Nullable
+  final int? accommodationId;  // ⬅️ Nullable
+  final String? accommodationName;  // ⬅️ Nullable
+  final int? accommodationUnitId;  // ⬅️ Nullable
+  final String? accommodationUnitName;  // ⬅️ Nullable
   final int price;
-  final String status; // ACCEPTED, REJECTED, WAITING
-  final String clientResponseStatus; // ACCEPTED, REJECTED, WAITING
-  final DateTime createdAt;
-  final DateTime updatedAt;
-  final bool isDeleted;
+  final String clientResponseStatus; // WAITING, ACCEPTED, REJECTED
+  final String createdAt;
 
   PriceRequest({
     required this.id,
     required this.searchRequestId,
-    required this.accommodationUnitId,
-    required this.accommodationUnitName,
-    required this.accommodationName,
+    this.managerId,  // ⬅️ Nullable
+    this.managerName,  // ⬅️ Nullable
+    this.accommodationId,  // ⬅️ Nullable
+    this.accommodationName,  // ⬅️ Nullable
+    this.accommodationUnitId,  // ⬅️ Nullable
+    this.accommodationUnitName,  // ⬅️ Nullable
     required this.price,
-    required this.status,
     required this.clientResponseStatus,
     required this.createdAt,
-    required this.updatedAt,
-    required this.isDeleted,
   });
 
   factory PriceRequest.fromJson(Map<String, dynamic> json) {
-    return PriceRequest(
-      id: (json['id'] as num).toInt(),
-      searchRequestId: (json['searchRequestId'] as num).toInt(),
-      accommodationUnitId: (json['accommodationUnitId'] as num).toInt(),
-      accommodationUnitName: json['accommodationUnitName'] as String,
-      accommodationName: json['accommodationName'] as String,
-      price: (json['price'] as num).toInt(),
-      status: json['status'] as String,
-      clientResponseStatus: json['clientResponseStatus'] as String,
-      createdAt: DateTime.parse(json['createdAt'] as String),
-      updatedAt: DateTime.parse(json['updatedAt'] as String),
-      isDeleted: json['isDeleted'] as bool,
-    );
+    try {
+      return PriceRequest(
+        id: (json['id'] as num).toInt(),
+        searchRequestId: (json['searchRequestId'] as num).toInt(),
+
+        // ⬅️ SAFE: Nullable поля с проверкой
+        managerId: json['managerId'] != null ? (json['managerId'] as num).toInt() : null,
+        managerName: json['managerName'] as String?,
+        accommodationId: json['accommodationId'] != null ? (json['accommodationId'] as num).toInt() : null,
+        accommodationName: json['accommodationName'] as String?,
+        accommodationUnitId: json['accommodationUnitId'] != null ? (json['accommodationUnitId'] as num).toInt() : null,
+        accommodationUnitName: json['accommodationUnitName'] as String?,
+
+        price: (json['price'] as num).toInt(),
+        clientResponseStatus: json['clientResponseStatus'] as String? ?? 'WAITING',
+        createdAt: json['createdAt'] as String? ?? DateTime.now().toIso8601String(),
+      );
+    } catch (e, stackTrace) {
+      print('❌ [PRICE REQUEST] Parse error: $e');
+      print('   JSON: $json');
+      print('   Stack: $stackTrace');
+      rethrow;
+    }
   }
 
   Map<String, dynamic> toJson() {
     return {
       'id': id,
       'searchRequestId': searchRequestId,
-      'accommodationUnitId': accommodationUnitId,
-      'accommodationUnitName': accommodationUnitName,
-      'accommodationName': accommodationName,
+      if (managerId != null) 'managerId': managerId,
+      if (managerName != null) 'managerName': managerName,
+      if (accommodationId != null) 'accommodationId': accommodationId,
+      if (accommodationName != null) 'accommodationName': accommodationName,
+      if (accommodationUnitId != null) 'accommodationUnitId': accommodationUnitId,
+      if (accommodationUnitName != null) 'accommodationUnitName': accommodationUnitName,
       'price': price,
-      'status': status,
       'clientResponseStatus': clientResponseStatus,
-      'createdAt': createdAt.toIso8601String(),
-      'updatedAt': updatedAt.toIso8601String(),
-      'isDeleted': isDeleted,
+      'createdAt': createdAt,
     };
   }
 
-  /// Статус на русском
-  String get statusText {
+  /// ⬅️ СТАТУСЫ ПРЕДЛОЖЕНИЙ НА РУССКОМ
+  String get statusTextRussian {
     switch (clientResponseStatus) {
+      case 'WAITING':
+        return 'Ожидает ответа';
       case 'ACCEPTED':
         return 'Принято';
       case 'REJECTED':
         return 'Отклонено';
-      case 'WAITING':
-        return 'Ожидает ответа';
       default:
         return clientResponseStatus;
     }
   }
 
-  /// Цвет статуса
-  String get statusColor {
-    switch (clientResponseStatus) {
-      case 'ACCEPTED':
-        return 'green';
-      case 'REJECTED':
-        return 'red';
-      case 'WAITING':
-        return 'orange';
-      default:
-        return 'grey';
-    }
-  }
-
-  /// Можно ли ответить на предложение
-  bool get canRespond => clientResponseStatus == 'WAITING';
+  /// ⬅️ НОВОЕ: Безопасные геттеры с fallback
+  String get safeAccommodationName => accommodationName ?? 'Не указано';
+  String get safeAccommodationUnitName => accommodationUnitName ?? 'Не указано';
+  String get safeManagerName => managerName ?? 'Менеджер';
 }
 
-/// Response for client decision
+/// Price Request Create Model
+class PriceRequestCreate {
+  final int searchRequestId;
+  final int accommodationUnitId;
+  final int price;
+
+  PriceRequestCreate({
+    required this.searchRequestId,
+    required this.accommodationUnitId,
+    required this.price,
+  });
+
+  Map<String, dynamic> toJson() {
+    return {
+      'searchRequestId': searchRequestId,
+      'accommodationUnitId': accommodationUnitId,
+      'price': price,
+    };
+  }
+}
+
+/// ⬅️ FIXED: Client Response Request (для accept/reject)
 class ClientResponseRequest {
-  final String clientResponseStatus; // ACCEPTED or REJECTED
+  final String clientResponseStatus; // "ACCEPTED" или "REJECTED"
 
   ClientResponseRequest({
     required this.clientResponseStatus,

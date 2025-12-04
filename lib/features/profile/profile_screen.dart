@@ -1,6 +1,10 @@
+import 'dart:io';
+
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:go_router/go_router.dart';
+import 'package:image_picker/image_picker.dart';
 import '../../data/models/user/user_model.dart';
 import '../../data/repositories/auth_repository.dart';
 import '../../data/services/token_storage.dart';
@@ -18,6 +22,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   // Edit mode state
   bool _isEditMode = false;
   bool _isLoading = true;
+  bool _isAvatarLoading = false;
 
   // User data
   UserModel? _user;
@@ -36,6 +41,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
   final TextEditingController _lastNameController = TextEditingController();
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _phoneController = TextEditingController();
+
+  final ImagePicker _imagePicker = ImagePicker();
 
   @override
   void initState() {
@@ -108,15 +115,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
           lastName: apiUser.lastName,
           username: apiUser.username,
           phone: apiUser.phoneNumber,
+          photoUrl: apiUser.photoUrl,
         );
 
         // Сохраняем данные локально (для offline access)
         await TokenStorage.saveUserData(
+          userId: apiUser.id.toString(),
           email: apiUser.email,
           firstName: apiUser.firstName ?? '',
           lastName: apiUser.lastName ?? '',
           username: apiUser.username,
           phone: apiUser.phoneNumber,
+          photoUrl: apiUser.photoUrl,
         );
 
         // ВРЕМЕННО ЗАКОММЕНТИРОВАНО - требует обновленный token_storage.dart
@@ -179,14 +189,50 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Future<void> _saveChanges() async {
     try {
       final email = _emailController.text.trim();
+      final firstName = _firstNameController.text.trim();
+      final lastName = _lastNameController.text.trim();
+      final phone = _phoneController.text.trim();
 
-      // 1. Сохраняем в обычное хранилище (для текущей сессии)
-      await TokenStorage.saveUserData(
+      // 1. Отправляем изменения на бэкенд
+      final result = await _authRepository.updateProfile(
+        firstName: firstName,
+        lastName: lastName,
         email: email,
-        firstName: _firstNameController.text.trim(),
-        lastName: _lastNameController.text.trim(),
-        phone: _phoneController.text.trim(),
-        username: _user?.username,
+        phoneNumber: phone.isEmpty ? null : phone,
+      );
+
+      if (result.error != null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(result.error!),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+
+      final updated = result.response!;
+      _user = UserModel(
+        id: updated.id.toString(),
+        email: updated.email,
+        firstName: updated.firstName,
+        lastName: updated.lastName,
+        phone: updated.phoneNumber,
+        username: updated.username,
+        photoUrl: updated.photoUrl,
+      );
+
+      // 2. Сохраняем в локальное хранилище (для текущей сессии / оффлайна)
+      await TokenStorage.saveUserData(
+        userId: updated.id.toString(),
+        email: updated.email,
+        firstName: updated.firstName ?? '',
+        lastName: updated.lastName ?? '',
+        phone: updated.phoneNumber,
+        username: updated.username,
+        photoUrl: updated.photoUrl,
       );
 
       // ВРЕМЕННО ЗАКОММЕНТИРОВАНО - требует обновленный token_storage.dart
@@ -227,9 +273,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
         );
       }
-
-      // TODO: Also send updated data to backend API
-      // await _authRepository.updateProfile(...)
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -413,22 +456,37 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return Row(
       children: [
         // Avatar
-        Container(
-          width: 80.w,
-          height: 80.w,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: const Color(0xFF295CDB).withOpacity(0.1),
-          ),
-          child: Center(
-            child: Text(
-              _getInitials(),
-              style: TextStyle(
-                fontSize: 32.sp,
-                fontWeight: FontWeight.w600,
-                color: const Color(0xFF295CDB),
+        GestureDetector(
+          onTap: _showAvatarActions,
+          child: Stack(
+            children: [
+              Container(
+                width: 80.w,
+                height: 80.w,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: const Color(0xFF295CDB).withOpacity(0.1),
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: _buildAvatarImage(),
               ),
-            ),
+              if (_isAvatarLoading)
+                Positioned.fill(
+                  child: Container(
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: Colors.black.withOpacity(0.3),
+                    ),
+                    child: Center(
+                      child: SizedBox(
+                        width: 20.w,
+                        height: 20.w,
+                        child: const CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
           ),
         ),
 
@@ -491,6 +549,157 @@ class _ProfileScreenState extends State<ProfileScreen> {
     if (firstName.isEmpty && lastName.isEmpty) return '?';
 
     return '${firstName.isNotEmpty ? firstName[0] : ''}${lastName.isNotEmpty ? lastName[0] : ''}'.toUpperCase();
+  }
+
+  /// Avatar image (network / initials)
+  Widget _buildAvatarImage() {
+    final photoUrl = _user?.photoUrl;
+    if (photoUrl != null && photoUrl.isNotEmpty) {
+      return CachedNetworkImage(
+        imageUrl: photoUrl,
+        fit: BoxFit.cover,
+        placeholder: (_, __) => Center(
+          child: Icon(
+            Icons.person,
+            size: 40.sp,
+            color: const Color(0xFF295CDB),
+          ),
+        ),
+        errorWidget: (_, __, ___) => Center(
+          child: Text(
+            _getInitials(),
+            style: TextStyle(
+              fontSize: 32.sp,
+              fontWeight: FontWeight.w600,
+              color: const Color(0xFF295CDB),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Center(
+      child: Text(
+        _getInitials(),
+        style: TextStyle(
+          fontSize: 32.sp,
+          fontWeight: FontWeight.w600,
+          color: const Color(0xFF295CDB),
+        ),
+      ),
+    );
+  }
+
+  /// Показать bottom sheet с действиями над аватаром
+  Future<void> _showAvatarActions() async {
+    if (_isAvatarLoading) return;
+
+    await showModalBottomSheet(
+      context: context,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16.r)),
+      ),
+      builder: (context) {
+        final hasPhoto = _user?.photoUrl != null && _user!.photoUrl!.isNotEmpty;
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.photo),
+                title: const Text('Выбрать из галереи'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _pickAndUploadAvatar();
+                },
+              ),
+              if (hasPhoto)
+                ListTile(
+                  leading: const Icon(Icons.delete_outline, color: Colors.red),
+                  title: const Text('Удалить фото'),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _deleteAvatar();
+                  },
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _pickAndUploadAvatar() async {
+    try {
+      final picked = await _imagePicker.pickImage(source: ImageSource.gallery, imageQuality: 85);
+      if (picked == null) return;
+
+      setState(() => _isAvatarLoading = true);
+
+      final result = await _authRepository.uploadProfilePhoto(picked.path);
+      if (result.error != null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(result.error!),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+
+      // После успешной загрузки перезагружаем профиль
+      await _loadUserData();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Ошибка загрузки фото: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isAvatarLoading = false);
+      }
+    }
+  }
+
+  Future<void> _deleteAvatar() async {
+    try {
+      setState(() => _isAvatarLoading = true);
+
+      final result = await _authRepository.deleteProfilePhoto();
+      if (result.error != null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(result.error!),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+
+      // После успешного удаления перезагружаем профиль
+      await _loadUserData();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Ошибка удаления фото: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isAvatarLoading = false);
+      }
+    }
   }
 
   /// Editable field with label

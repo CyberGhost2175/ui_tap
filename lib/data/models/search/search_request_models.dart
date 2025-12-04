@@ -14,7 +14,7 @@ class DistrictModel {
 
   factory DistrictModel.fromJson(Map<String, dynamic> json) {
     return DistrictModel(
-      id: (json['id'] as num).toInt(),  // ⬅️ FIXED: безопасное приведение
+      id: (json['id'] as num).toInt(),
       name: json['name'] as String,
       cityId: json['cityId'] != null ? (json['cityId'] as num).toInt() : null,
     );
@@ -43,7 +43,7 @@ class DictionaryItem {
 
   factory DictionaryItem.fromJson(Map<String, dynamic> json) {
     return DictionaryItem(
-      id: (json['id'] as num).toInt(),  // ⬅️ FIXED: безопасное приведение
+      id: (json['id'] as num).toInt(),
       key: json['key'] as String,
       value: json['value'] as String,
     );
@@ -60,17 +60,17 @@ class DictionaryItem {
 
 /// Search Request Create/Update Request Model
 class SearchRequestCreate {
-  final String checkInDate;       // "2025-12-01"
-  final String checkOutDate;      // "2025-12-05"
+  final String checkInDate;
+  final String checkOutDate;
   final bool oneNight;
   final int price;
   final int countOfPeople;
-  final int? fromRating;          // nullable
-  final int? toRating;            // nullable
-  final List<String> unitTypes;   // ["HOTEL_ROOM", "APARTMENT"]
-  final List<int> districtIds;    // [1, 2, 3]
-  final List<int>? serviceDictionaryIds;    // optional
-  final List<int>? conditionDictionaryIds;  // optional
+  final int? fromRating;
+  final int? toRating;
+  final List<String> unitTypes;
+  final List<int> districtIds;
+  final List<int>? serviceDictionaryIds;
+  final List<int>? conditionDictionaryIds;
 
   SearchRequestCreate({
     required this.checkInDate,
@@ -97,10 +97,8 @@ class SearchRequestCreate {
       if (toRating != null) 'toRating': toRating,
       'unitTypes': unitTypes,
       'districtIds': districtIds,
-      if (serviceDictionaryIds != null && serviceDictionaryIds!.isNotEmpty)
-        'serviceDictionaryIds': serviceDictionaryIds,
-      if (conditionDictionaryIds != null && conditionDictionaryIds!.isNotEmpty)
-        'conditionDictionaryIds': conditionDictionaryIds,
+      'serviceDictionaryIds': serviceDictionaryIds ?? [],
+      'conditionDictionaryIds': conditionDictionaryIds ?? [],
     };
   }
 }
@@ -117,7 +115,7 @@ class SearchRequest {
   final bool oneNight;
   final int price;
   final int countOfPeople;
-  final String status; // "OPEN_TO_PRICE_REQUEST", etc.
+  final String status;
   final List<String> unitTypes;
   final List<DistrictModel> districts;
   final List<DictionaryItem> services;
@@ -141,12 +139,49 @@ class SearchRequest {
     required this.services,
     required this.conditions,
     required this.createdAt,
-
   });
+
+  /// Локальное копирование с изменением отдельных полей
+  SearchRequest copyWith({
+    int? id,
+    int? authorId,
+    String? authorName,
+    double? fromRating,
+    double? toRating,
+    String? checkInDate,
+    String? checkOutDate,
+    bool? oneNight,
+    int? price,
+    int? countOfPeople,
+    String? status,
+    List<String>? unitTypes,
+    List<DistrictModel>? districts,
+    List<DictionaryItem>? services,
+    List<DictionaryItem>? conditions,
+    String? createdAt,
+  }) {
+    return SearchRequest(
+      id: id ?? this.id,
+      authorId: authorId ?? this.authorId,
+      authorName: authorName ?? this.authorName,
+      fromRating: fromRating ?? this.fromRating,
+      toRating: toRating ?? this.toRating,
+      checkInDate: checkInDate ?? this.checkInDate,
+      checkOutDate: checkOutDate ?? this.checkOutDate,
+      oneNight: oneNight ?? this.oneNight,
+      price: price ?? this.price,
+      countOfPeople: countOfPeople ?? this.countOfPeople,
+      status: status ?? this.status,
+      unitTypes: unitTypes ?? this.unitTypes,
+      districts: districts ?? this.districts,
+      services: services ?? this.services,
+      conditions: conditions ?? this.conditions,
+      createdAt: createdAt ?? this.createdAt,
+    );
+  }
 
   factory SearchRequest.fromJson(Map<String, dynamic> json) {
     return SearchRequest(
-      // ⬅️ FIXED: Безопасное приведение для всех числовых полей
       id: (json['id'] as num).toInt(),
       authorId: (json['authorId'] as num).toInt(),
       authorName: json['authorName'] as String,
@@ -186,20 +221,26 @@ class SearchRequest {
       'countOfPeople': countOfPeople,
       'status': status,
       'unitTypes': unitTypes,
-      'districts': districts.map((e) => e.toJson()).toList(),
-      'services': services.map((e) => e.toJson()).toList(),
-      'conditions': conditions.map((e) => e.toJson()).toList(),
+      'districts': districts.map((d) => d.toJson()).toList(),
+      'services': services.map((s) => s.toJson()).toList(),
+      'conditions': conditions.map((c) => c.toJson()).toList(),
       'createdAt': createdAt,
     };
   }
 
-  /// Get human-readable status
+  /// ⬅️ СТАТУСЫ ЗАЯВОК НА РУССКОМ
+  /// Backend enum: OPEN_TO_PRICE_REQUEST, PRICE_REQUEST_PENDING,
+  ///               WAIT_TO_RESERVATION, FINISHED, CANCELLED
   String get statusText {
     switch (status) {
       case 'OPEN_TO_PRICE_REQUEST':
         return 'Открыта для предложений';
-      case 'CLOSED':
-        return 'Закрыта';
+      case 'PRICE_REQUEST_PENDING':
+        return 'Ожидание предложений';
+      case 'WAIT_TO_RESERVATION':
+        return 'Ожидание бронирования';
+      case 'FINISHED':
+        return 'Завершена';
       case 'CANCELLED':
         return 'Отменена';
       default:
@@ -207,29 +248,37 @@ class SearchRequest {
     }
   }
 
-  /// Get unit types as readable text
+  /// ⬅️ Цвет статуса
+  String get statusColor {
+    switch (status) {
+      case 'OPEN_TO_PRICE_REQUEST':
+        return 'green';
+      case 'PRICE_REQUEST_PENDING':
+        return 'orange';
+      case 'WAIT_TO_RESERVATION':
+        return 'blue';
+      case 'FINISHED':
+        return 'grey';
+      case 'CANCELLED':
+        return 'red';
+      default:
+        return 'grey';
+    }
+  }
+
+  /// ⬅️ Типы размещения на русском
   String get unitTypesText {
-    final types = unitTypes.map((type) {
+    return unitTypes.map((type) {
       switch (type) {
         case 'HOTEL_ROOM':
-          return 'Отель';
+          return 'Гостиница';
         case 'APARTMENT':
           return 'Квартира';
+        case 'HOUSE':
+          return 'Дом';
         default:
           return type;
       }
-    }).toList();
-    return types.join(', ');
-  }
-}
-
-/// Update price request model
-class UpdatePriceRequest {
-  final int price;
-
-  UpdatePriceRequest({required this.price});
-
-  Map<String, dynamic> toJson() {
-    return {'price': price};
+    }).join(', ');
   }
 }

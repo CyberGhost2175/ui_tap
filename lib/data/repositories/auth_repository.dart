@@ -93,6 +93,70 @@ class AuthRepository {
     }
   }
 
+  /// Обновить профиль текущего пользователя (PUT /users/me)
+  Future<({UserResponse? response, String? error})> updateProfile({
+    required String firstName,
+    required String lastName,
+    required String email,
+    String? phoneNumber,
+  }) async {
+    try {
+      final accessToken = await TokenStorage.getAccessToken();
+
+      if (accessToken == null) {
+        return (response: null, error: 'Токен не найден');
+      }
+
+      final response = await _apiService.updateCurrentUser(
+        accessToken,
+        firstName: firstName,
+        lastName: lastName,
+        email: email,
+        phoneNumber: phoneNumber,
+      );
+
+      return (response: response, error: null);
+    } on Exception catch (e) {
+      return (response: null, error: e.toString().replaceAll('Exception: ', ''));
+    } catch (_) {
+      return (response: null, error: 'Неизвестная ошибка');
+    }
+  }
+
+  /// Загрузить фото профиля (PUT /users/me/photo)
+  Future<({bool success, String? error})> uploadProfilePhoto(String filePath) async {
+    try {
+      final accessToken = await TokenStorage.getAccessToken();
+      if (accessToken == null) {
+        return (success: false, error: 'Токен не найден');
+      }
+
+      await _apiService.uploadProfilePhoto(accessToken, filePath);
+      return (success: true, error: null);
+    } on Exception catch (e) {
+      return (success: false, error: e.toString().replaceAll('Exception: ', ''));
+    } catch (_) {
+      return (success: false, error: 'Неизвестная ошибка');
+    }
+  }
+
+  /// Удалить фото профиля (DELETE /users/me/photo)
+  Future<({bool success, String? error})> deleteProfilePhoto() async {
+    try {
+      final accessToken = await TokenStorage.getAccessToken();
+      if (accessToken == null) {
+        return (success: false, error: 'Токен не найден');
+      }
+
+      await _apiService.deleteProfilePhoto(accessToken);
+      return (success: true, error: null);
+    } on Exception catch (e) {
+      return (success: false, error: e.toString().replaceAll('Exception: ', ''));
+    } catch (_) {
+      return (success: false, error: 'Неизвестная ошибка');
+    }
+  }
+
   /// ⬅️ НОВЫЙ МЕТОД: Logout
   Future<void> logout() async {
     await _apiService.logout();

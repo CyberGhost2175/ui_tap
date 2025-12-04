@@ -1,14 +1,15 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:intl/intl.dart';
 import '../../data/models/search/search_request_models.dart';
+import '../../data/models/search/price_request_models.dart';
 import '../../data/services/search_request_api_service.dart';
-import '../../data/services/price_request_api_service.dart'; // ⬅️ ДОБАВЛЕНО
-import 'price_requests_screen.dart';
+import '../../data/services/price_request_api_service.dart';
+import '../../data/services/notification_service.dart';
 
-/// Screen показывающий активную заявку на поиск жилья
-/// Отображается после успешного создания заявки
+/// ⬅️ FIXED: Кэширование предложений на 15 секунд + русские статусы + авточек каждые 15 сек
 class ActiveSearchRequestScreen extends StatefulWidget {
   final int requestId;
 
@@ -23,21 +24,78 @@ class ActiveSearchRequestScreen extends StatefulWidget {
 
 class _ActiveSearchRequestScreenState extends State<ActiveSearchRequestScreen> {
   final SearchRequestApiService _apiService = SearchRequestApiService();
-  final PriceRequestApiService _priceApiService = PriceRequestApiService(); // ⬅️ ДОБАВЛЕНО
+  final PriceRequestApiService _priceApiService = PriceRequestApiService();
 
   SearchRequest? _request;
+  List<PriceRequest> _priceRequests = [];
   bool _isLoading = true;
+  bool _isLoadingOffers = false;
   String? _error;
-  int _previousWaitingCount = 0; // ⬅️ ДОБАВЛЕНО: Счетчик предложений
+
+  Timer? _autoRefreshTimer;
+  Timer? _cacheCleanupTimer;
+  int _previousOffersCount = 0;
+
+  final Map<int, _CachedPriceRequest> _cachedOffers = {};
 
   @override
   void initState() {
     super.initState();
-    _loadRequest(showToastForNewOffers: false); // ⬅️ ИЗМЕНЕНО: без тостера при первой загрузке
+    _loadRequest();
+    _startAutoRefresh();
+    _startCacheCleanup();
   }
 
-  /// Загрузка заявки с сервера
-  Future<void> _loadRequest({bool showToastForNewOffers = true}) async { // ⬅️ ИЗМЕНЕНО: параметр добавлен
+  @override
+  void dispose() {
+    _autoRefreshTimer?.cancel();
+    _cacheCleanupTimer?.cancel();
+    super.dispose();
+  }
+
+  void _startCacheCleanup() {
+    _cacheCleanupTimer = Timer.periodic(
+      const Duration(seconds: 5),
+          (timer) {
+        final now = DateTime.now();
+        final before = _cachedOffers.length;
+
+        _cachedOffers.removeWhere((id, cached) {
+          return now.difference(cached.addedAt).inSeconds > 15;
+        });
+
+        final after = _cachedOffers.length;
+
+        if (before != after) {
+          print('🗑️ [CACHE] Removed ${before - after} expired offers');
+          setState(() {});
+        }
+      },
+    );
+
+    print('✅ [CACHE] Cleanup timer started (every 5 seconds)');
+  }
+
+  /// ⬅️ FIXED: Проверка каждые 15 секунд (было 60)
+  void _startAutoRefresh() {
+    _autoRefreshTimer = Timer.periodic(
+      const Duration(seconds: 15), // ⬅️ ИЗМЕНЕНО: с 60 на 15
+          (timer) {
+        print('🔄 [AUTO-REFRESH] Проверяем новые предложения...');
+
+        if (_request?.status == 'OPEN_TO_PRICE_REQUEST') {
+          _loadPriceRequests(showToastIfNew: true);
+        } else {
+          print('⏸️ [AUTO-REFRESH] Заявка неактивна, останавливаем автообновление');
+          timer.cancel();
+        }
+      },
+    );
+
+    print('✅ [AUTO-REFRESH] Автообновление запущено (каждые 15 секунд)');
+  }
+
+  Future<void> _loadRequest() async {
     setState(() {
       _isLoading = true;
       _error = null;
@@ -45,16 +103,14 @@ class _ActiveSearchRequestScreenState extends State<ActiveSearchRequestScreen> {
 
     try {
       final request = await _apiService.getSearchRequestById(widget.requestId);
-
-      // ⬅️ ДОБАВЛЕНО: Проверяем количество новых предложений
-      if (showToastForNewOffers && _request != null) {
-        await _checkForNewOffers();
-      }
-
       setState(() {
         _request = request;
         _isLoading = false;
       });
+
+      if (request.status == 'OPEN_TO_PRICE_REQUEST') {
+        _loadPriceRequests(showToastIfNew: false);
+      }
     } catch (e) {
       setState(() {
         _error = e.toString().replaceAll('Exception: ', '');
@@ -63,110 +119,166 @@ class _ActiveSearchRequestScreenState extends State<ActiveSearchRequestScreen> {
     }
   }
 
-  /// ⬅️ НОВОЕ: Проверка новых предложений и показ тостера
-  Future<void> _checkForNewOffers() async {
+  Future<void> _loadPriceRequests({bool showToastIfNew = false}) async {
+    if (!showToastIfNew) {
+      setState(() {
+        _isLoadingOffers = true;
+      });
+    }
+
     try {
-      final priceRequests = await _priceApiService.getPriceRequestsBySearchRequest(
+      final requests = await _priceApiService.getPriceRequestsBySearchRequest(
         widget.requestId,
       );
 
-      // Считаем предложения со статусом WAITING
-      final waitingCount = priceRequests
-          .where((pr) => pr.clientResponseStatus == 'WAITING')
-          .length;
+      final now = DateTime.now();
 
-      // Если появились новые предложения - показываем тостер
-      if (waitingCount > _previousWaitingCount) {
-        final newOffersCount = waitingCount - _previousWaitingCount;
+      print('📥 [PRICE REQUESTS] Received ${requests.length} offers from backend');
 
-        if (!mounted) return;
-
-        // ⬅️ ПРОСТОЙ ОРАНЖЕВЫЙ ТОСТЕР (как на скриншоте)
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Row(
-              children: [
-                // Иконка часов
-                Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.2),
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(Icons.schedule, color: Colors.white, size: 20),
-                ),
-                SizedBox(width: 12),
-                // Текст
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        'Ожидает ответа',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w700,
-                          fontSize: 15,
-                          color: Colors.white,
-                        ),
-                      ),
-                      SizedBox(height: 4),
-                      Text(
-                        newOffersCount == 1
-                            ? 'Получено предложение от менеджера'
-                            : 'Получено $newOffersCount предложений',
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: Colors.white.withOpacity(0.9),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            backgroundColor: Colors.orange,
-            duration: const Duration(seconds: 4),
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
-            margin: EdgeInsets.only(
-              bottom: 80,
-              left: 16,
-              right: 16,
-            ),
-          ),
-        );
+      for (var request in requests) {
+        if (!_cachedOffers.containsKey(request.id)) {
+          _cachedOffers[request.id] = _CachedPriceRequest(
+            request: request,
+            addedAt: now,
+          );
+          print('✨ [CACHE] Added new offer ${request.id} to cache');
+        } else {
+          _cachedOffers[request.id] = _CachedPriceRequest(
+            request: request,
+            addedAt: _cachedOffers[request.id]!.addedAt,
+          );
+        }
       }
 
-      _previousWaitingCount = waitingCount;
+      final displayRequests = _cachedOffers.values
+          .where((cached) {
+        final age = now.difference(cached.addedAt).inSeconds;
+        return age <= 15;
+      })
+          .map((cached) => cached.request)
+          .toList();
+
+      print('📊 [CACHE] Displaying ${displayRequests.length} offers (max age: 15s)');
+
+      final waitingRequests = displayRequests
+          .where((pr) => pr.clientResponseStatus == 'WAITING')
+          .toList();
+
+      final currentCount = waitingRequests.length;
+      final hasNewOffers = currentCount > _previousOffersCount;
+
+      setState(() {
+        _priceRequests = displayRequests;
+        _isLoadingOffers = false;
+      });
+
+      if (hasNewOffers && showToastIfNew && mounted) {
+        final newOffersCount = currentCount - _previousOffersCount;
+        print('🆕 [AUTO-REFRESH] Новых предложений: $newOffersCount');
+        _showNewOffersToast(newOffersCount);
+        
+        // Показываем уведомления для новых предложений (только что добавленных в кэш)
+        final newOffers = waitingRequests.where((pr) {
+          final cached = _cachedOffers[pr.id];
+          if (cached == null) return false;
+          // Предложение считается новым, если добавлено в последние 5 секунд
+          return DateTime.now().difference(cached.addedAt).inSeconds <= 5;
+        }).toList();
+        
+        for (var offer in newOffers) {
+          await NotificationService().showNewOfferNotification(
+            requestId: offer.searchRequestId,
+            accommodationName: offer.safeAccommodationName,
+            price: offer.price.toInt(),
+          );
+        }
+      }
+
+      _previousOffersCount = currentCount;
+
+      if (showToastIfNew) {
+        print('✅ [AUTO-REFRESH] Проверка завершена. Предложений: ${displayRequests.length}');
+      }
     } catch (e) {
-      print('❌ [CHECK OFFERS] Error: $e');
+      setState(() {
+        _isLoadingOffers = false;
+      });
+      print('❌ [PRICE REQUESTS] Error: $e');
     }
   }
 
-  /// 💰 Изменение цены
-  Future<void> _updatePrice() async {
-    final TextEditingController priceController = TextEditingController(
-      text: _request!.price.toString(),
+  void _showNewOffersToast(int count) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.2),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.schedule, color: Colors.white, size: 20),
+            ),
+            SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Новое предложение!',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 15,
+                      color: Colors.white,
+                    ),
+                  ),
+                  SizedBox(height: 4),
+                  Text(
+                    count == 1
+                        ? 'Получено предложение от менеджера'
+                        : 'Получено $count новых предложений',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: Colors.white.withOpacity(0.9),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        backgroundColor: Colors.orange,
+        duration: const Duration(seconds: 4),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+        ),
+        margin: EdgeInsets.only(bottom: 80, left: 16, right: 16),
+      ),
     );
+  }
 
-    final newPrice = await showDialog<int>(
+  Future<void> _acceptPriceRequest(PriceRequest request) async {
+    final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16.r)),
         title: Row(
           children: [
-            Icon(Icons.attach_money, color: const Color(0xFF295CDB), size: 24.sp),
+            Icon(Icons.check_circle_outline, color: Colors.green, size: 24.sp),
             SizedBox(width: 8.w),
-            Text(
-              'Изменить цену',
-              style: TextStyle(
-                fontSize: 18.sp,
-                fontWeight: FontWeight.w700,
-                color: Colors.black87,
+            Expanded(
+              child: Text(
+                'Принять предложение?',
+                style: TextStyle(
+                  fontSize: 18.sp,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.black87,
+                ),
               ),
             ),
           ],
@@ -176,128 +288,63 @@ class _ActiveSearchRequestScreenState extends State<ActiveSearchRequestScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Текущая цена: ${_request!.price} тг/ночь',
-              style: TextStyle(
-                fontSize: 14.sp,
-                color: Colors.grey.shade700,
-                fontWeight: FontWeight.w500,
-              ),
+              'Объект: ${request.accommodationName}',
+              style: TextStyle(fontSize: 14.sp, fontWeight: FontWeight.w600),
             ),
-            SizedBox(height: 16.h),
-            TextField(
-              controller: priceController,
-              keyboardType: TextInputType.number,
-              inputFormatters: [
-                FilteringTextInputFormatter.digitsOnly,
-              ],
-              style: TextStyle(
-                fontSize: 16.sp,
-                fontWeight: FontWeight.w600,
-                color: Colors.black87,
-              ),
-              decoration: InputDecoration(
-                labelText: 'Новая цена',
-                labelStyle: TextStyle(
-                  color: const Color(0xFF295CDB),
-                  fontWeight: FontWeight.w500,
-                ),
-                suffixText: 'тг/ночь',
-                suffixStyle: TextStyle(
-                  color: Colors.grey.shade700,
-                  fontWeight: FontWeight.w500,
-                ),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12.r),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12.r),
-                  borderSide: BorderSide(color: const Color(0xFF295CDB), width: 2),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12.r),
-                  borderSide: BorderSide(color: Colors.grey.shade400, width: 1.5),
-                ),
-              ),
-              autofocus: true,
+            SizedBox(height: 4.h),
+            Text(
+              'Номер: ${request.accommodationUnitName}',
+              style: TextStyle(fontSize: 14.sp, color: Colors.grey.shade700),
             ),
-            SizedBox(height: 12.h),
+            SizedBox(height: 8.h),
             Container(
               padding: EdgeInsets.all(12.w),
               decoration: BoxDecoration(
-                color: Colors.blue.shade50,
+                color: Colors.green.shade50,
                 borderRadius: BorderRadius.circular(8.r),
-                border: Border.all(
-                  color: Colors.blue.shade200,
-                  width: 1,
-                ),
+                border: Border.all(color: Colors.green, width: 1),
               ),
               child: Row(
                 children: [
-                  Icon(
-                    Icons.info_outline,
-                    size: 18.sp,
-                    color: const Color(0xFF295CDB),
-                  ),
+                  Icon(Icons.attach_money, color: Colors.green, size: 20.sp),
                   SizedBox(width: 8.w),
-                  Expanded(
-                    child: Text(
-                      'Можно изменить только цену. Другие параметры изменить нельзя.',
-                      style: TextStyle(
-                        fontSize: 12.sp,
-                        color: const Color(0xFF295CDB),
-                        fontWeight: FontWeight.w500,
-                      ),
+                  Text(
+                    '${request.price} тг/ночь',
+                    style: TextStyle(
+                      fontSize: 18.sp,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.green,
                     ),
                   ),
                 ],
               ),
             ),
+            SizedBox(height: 12.h),
+            Text(
+              'После принятия менеджер получит уведомление и свяжется с вами для подтверждения.',
+              style: TextStyle(fontSize: 12.sp, color: Colors.grey.shade600),
+            ),
           ],
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context, null),
-            child: Text(
-              'Отмена',
-              style: TextStyle(
-                color: Colors.grey.shade700,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
+            onPressed: () => Navigator.pop(context, false),
+            child: Text('Отмена', style: TextStyle(color: Colors.grey.shade700)),
           ),
           ElevatedButton(
-            onPressed: () {
-              final price = int.tryParse(priceController.text);
-              if (price != null && price > 0) {
-                Navigator.pop(context, price);
-              } else {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Введите корректную цену'),
-                    backgroundColor: Colors.orange,
-                  ),
-                );
-              }
-            },
+            onPressed: () => Navigator.pop(context, true),
             style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF295CDB),
+              backgroundColor: Colors.green,
               foregroundColor: Colors.white,
             ),
-            child: Text(
-              'Сохранить',
-              style: TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
+            child: Text('Принять', style: TextStyle(color: Colors.white)),
           ),
         ],
       ),
     );
 
-    if (newPrice == null || newPrice == _request!.price) return;
+    if (confirm != true) return;
 
-    // Показываем loader
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -311,15 +358,9 @@ class _ActiveSearchRequestScreenState extends State<ActiveSearchRequestScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              CircularProgressIndicator(color: const Color(0xFF295CDB)),
+              CircularProgressIndicator(color: Colors.green),
               SizedBox(height: 16.h),
-              Text(
-                'Обновляем цену...',
-                style: TextStyle(
-                  fontSize: 16.sp,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
+              Text('Принимаем предложение...', style: TextStyle(fontSize: 16.sp, fontWeight: FontWeight.w600)),
             ],
           ),
         ),
@@ -327,31 +368,169 @@ class _ActiveSearchRequestScreenState extends State<ActiveSearchRequestScreen> {
     );
 
     try {
-      await _apiService.updateSearchRequestPrice(widget.requestId, newPrice);
+      print('📤 [ACCEPT] Accepting price request ${request.id}');
+
+      _cachedOffers.remove(request.id);
+
+      await _priceApiService.acceptPriceRequest(request.id);
+      print('✅ [ACCEPT] Success! Backend will create reservation automatically');
 
       if (!mounted) return;
 
-      // Закрываем loader
       Navigator.pop(context);
+      _autoRefreshTimer?.cancel();
 
-      // Показываем success
+      // Локально обновляем статус заявки, чтобы сразу запретить отмену/изменение цены
+      setState(() {
+        if (_request != null) {
+          _request = _request!.copyWith(status: 'WAIT_TO_RESERVATION');
+        }
+      });
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Цена обновлена: $newPrice тг/ночь'),
+          content: Row(
+            children: [
+              Icon(Icons.check_circle, color: Colors.white, size: 24),
+              SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Предложение принято!',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 15,
+                        color: Colors.white,
+                      ),
+                    ),
+                    SizedBox(height: 4),
+                    Text(
+                      'Менеджер свяжется с вами для подтверждения бронирования',
+                      style: TextStyle(fontSize: 13, color: Colors.white.withOpacity(0.9)),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
           backgroundColor: Colors.green,
+          duration: const Duration(seconds: 5),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          margin: EdgeInsets.only(bottom: 80, left: 16, right: 16),
+        ),
+      );
+
+      Navigator.pop(context);
+    } catch (e) {
+      if (!mounted) return;
+
+      Navigator.pop(context);
+
+      print('❌ [ACCEPT] Error: $e');
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Ошибка принятия предложения',
+                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+              ),
+              SizedBox(height: 4),
+              Text(
+                e.toString().replaceAll('Exception: ', ''),
+                style: TextStyle(fontSize: 13),
+              ),
+            ],
+          ),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    }
+  }
+
+  Future<void> _rejectPriceRequest(PriceRequest request) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16.r)),
+        title: Row(
+          children: [
+            Icon(Icons.cancel_outlined, color: Colors.red, size: 24.sp),
+            SizedBox(width: 8.w),
+            Text('Отклонить предложение?', style: TextStyle(fontSize: 18.sp, fontWeight: FontWeight.w700)),
+          ],
+        ),
+        content: Text(
+          'Вы уверены, что хотите отклонить это предложение? Заявка останется активной.',
+          style: TextStyle(fontSize: 14.sp, color: Colors.grey.shade700),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text('Отмена', style: TextStyle(color: Colors.grey.shade700)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+            child: Text('Отклонить', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => Center(
+        child: Container(
+          padding: EdgeInsets.all(24.w),
+          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12.r)),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(color: Colors.red),
+              SizedBox(height: 16.h),
+              Text('Отклоняем...', style: TextStyle(fontSize: 16.sp, fontWeight: FontWeight.w600)),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    try {
+      _cachedOffers.remove(request.id);
+
+      await _priceApiService.rejectPriceRequest(request.id);
+
+      if (!mounted) return;
+
+      Navigator.pop(context);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Предложение отклонено. Заявка остается активной.'),
+          backgroundColor: Colors.orange,
           duration: const Duration(seconds: 2),
         ),
       );
 
-      // Перезагружаем заявку
-      await _loadRequest();
+      await _loadPriceRequests();
     } catch (e) {
       if (!mounted) return;
 
-      // Закрываем loader
       Navigator.pop(context);
 
-      // Показываем ошибку
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Ошибка: ${e.toString().replaceAll('Exception: ', '')}'),
@@ -362,18 +541,86 @@ class _ActiveSearchRequestScreenState extends State<ActiveSearchRequestScreen> {
     }
   }
 
-  /// Отмена заявки
+  Future<void> _updatePrice() async {
+    final TextEditingController priceController = TextEditingController(
+      text: _request!.price.toString(),
+    );
+
+    final newPrice = await showDialog<int>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: Colors.white,
+        title: Row(
+          children: [
+            Icon(Icons.attach_money, color: const Color(0xFF295CDB), size: 24.sp),
+            SizedBox(width: 8.w),
+            Text('Изменить цену', style: TextStyle(fontSize: 18.sp, fontWeight: FontWeight.w700)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Текущая цена: ${_request!.price} тг/ночь',
+                style: TextStyle(fontSize: 14.sp, color: Colors.grey.shade700)),
+            SizedBox(height: 16.h),
+            TextField(
+              controller: priceController,
+              keyboardType: TextInputType.number,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              decoration: InputDecoration(
+                labelText: 'Новая цена',
+                suffixText: 'тг/ночь',
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12.r)),
+              ),
+              autofocus: true,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, null),
+            child: Text('Отмена'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final price = int.tryParse(priceController.text);
+              if (price != null && price > 0) {
+                Navigator.pop(context, price);
+              }
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF295CDB)),
+            child: Text('Сохранить'),
+          ),
+        ],
+      ),
+    );
+
+    if (newPrice == null || newPrice == _request!.price) return;
+
+    try {
+      await _apiService.updateSearchRequestPrice(widget.requestId, newPrice);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Цена обновлена'), backgroundColor: Colors.green),
+      );
+      await _loadRequest();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Ошибка: $e'), backgroundColor: Colors.red),
+      );
+    }
+  }
+
   Future<void> _cancelRequest() async {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Отменить заявку?'),
-        content: const Text('Вы уверены, что хотите отменить эту заявку на поиск жилья?'),
+        content: const Text('Вы уверены?'),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Нет'),
-          ),
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Нет')),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
             style: TextButton.styleFrom(foregroundColor: Colors.red),
@@ -386,27 +633,18 @@ class _ActiveSearchRequestScreenState extends State<ActiveSearchRequestScreen> {
     if (confirm != true) return;
 
     try {
+      _autoRefreshTimer?.cancel();
+
       await _apiService.cancelSearchRequest(widget.requestId);
-
       if (!mounted) return;
-
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Заявка успешно отменена'),
-          backgroundColor: Colors.green,
-        ),
+        const SnackBar(content: Text('Заявка отменена'), backgroundColor: Colors.green),
       );
-
-      // Возвращаемся на главную
       Navigator.pop(context);
     } catch (e) {
       if (!mounted) return;
-
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Ошибка: ${e.toString().replaceAll('Exception: ', '')}'),
-          backgroundColor: Colors.red,
-        ),
+        SnackBar(content: Text('Ошибка: $e'), backgroundColor: Colors.red),
       );
     }
   }
@@ -420,17 +658,51 @@ class _ActiveSearchRequestScreenState extends State<ActiveSearchRequestScreen> {
         elevation: 0,
         leading: IconButton(
           icon: Icon(Icons.arrow_back, color: Colors.black87),
-          onPressed: () => Navigator.pop(context),
+          onPressed: () {
+            _autoRefreshTimer?.cancel();
+            _cacheCleanupTimer?.cancel();
+            Navigator.pop(context);
+          },
         ),
-        title: Text(
-          'Заявка на поиск',
-          style: TextStyle(
-            fontSize: 18.sp,
-            fontWeight: FontWeight.w700,
-            color: Colors.black87,
-          ),
-        ),
+        title: Text('Заявка на поиск', style: TextStyle(fontSize: 18.sp, fontWeight: FontWeight.w700)),
         centerTitle: true,
+        actions: [
+          if (_request?.status == 'OPEN_TO_PRICE_REQUEST')
+            Padding(
+              padding: EdgeInsets.only(right: 16.w),
+              child: Center(
+                child: Container(
+                  padding: EdgeInsets.symmetric(horizontal: 8.w, vertical: 4.h),
+                  decoration: BoxDecoration(
+                    color: Colors.green.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(12.r),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 8.w,
+                        height: 8.w,
+                        decoration: BoxDecoration(
+                          color: Colors.green,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      SizedBox(width: 4.w),
+                      Text(
+                        'LIVE',
+                        style: TextStyle(
+                          fontSize: 10.sp,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.green,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+        ],
       ),
       body: _buildBody(),
     );
@@ -438,97 +710,55 @@ class _ActiveSearchRequestScreenState extends State<ActiveSearchRequestScreen> {
 
   Widget _buildBody() {
     if (_isLoading) {
-      return Center(
-        child: CircularProgressIndicator(
-          color: const Color(0xFF295CDB),
-        ),
-      );
+      return Center(child: CircularProgressIndicator(color: const Color(0xFF295CDB)));
     }
 
     if (_error != null) {
       return Center(
-        child: Padding(
-          padding: EdgeInsets.all(24.w),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                Icons.error_outline,
-                size: 64.sp,
-                color: Colors.red,
-              ),
-              SizedBox(height: 16.h),
-              Text(
-                'Ошибка загрузки заявки',
-                style: TextStyle(
-                  fontSize: 18.sp,
-                  fontWeight: FontWeight.w700,
-                  color: Colors.black87,
-                ),
-              ),
-              SizedBox(height: 8.h),
-              Text(
-                _error!,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 14.sp,
-                  color: Colors.grey.shade600,
-                ),
-              ),
-              SizedBox(height: 24.h),
-              ElevatedButton(
-                onPressed: _loadRequest,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF295CDB),
-                ),
-                child: const Text('Повторить'),
-              ),
-            ],
-          ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.error_outline, size: 64.sp, color: Colors.red),
+            SizedBox(height: 16.h),
+            Text('Ошибка загрузки', style: TextStyle(fontSize: 18.sp, fontWeight: FontWeight.w700)),
+            SizedBox(height: 8.h),
+            Text(_error!, style: TextStyle(fontSize: 14.sp, color: Colors.grey.shade600)),
+            SizedBox(height: 24.h),
+            ElevatedButton(
+              onPressed: _loadRequest,
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF295CDB)),
+              child: const Text('Повторить'),
+            ),
+          ],
         ),
       );
     }
 
-    if (_request == null) {
-      return Center(child: Text('Заявка не найдена'));
-    }
+    if (_request == null) return Center(child: Text('Заявка не найдена'));
 
     return SingleChildScrollView(
       padding: EdgeInsets.all(20.w),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Success message
           _buildSuccessCard(),
           SizedBox(height: 20.h),
-
-          // Status
           _buildStatusCard(),
           SizedBox(height: 20.h),
 
-          // Main info
+          if (_request!.status == 'OPEN_TO_PRICE_REQUEST' && _priceRequests.isNotEmpty) ...[
+            _buildPriceRequestsSection(),
+            SizedBox(height: 20.h),
+          ],
+
           _buildMainInfoCard(),
           SizedBox(height: 20.h),
 
-          // Districts
           if (_request!.districts.isNotEmpty) ...[
             _buildDistrictsCard(),
             SizedBox(height: 20.h),
           ],
 
-          // Services
-          if (_request!.services.isNotEmpty) ...[
-            _buildServicesCard(),
-            SizedBox(height: 20.h),
-          ],
-
-          // Conditions
-          if (_request!.conditions.isNotEmpty) ...[
-            _buildConditionsCard(),
-            SizedBox(height: 20.h),
-          ],
-
-          // Action buttons
           _buildActionButtons(),
           SizedBox(height: 40.h),
         ],
@@ -536,62 +766,159 @@ class _ActiveSearchRequestScreenState extends State<ActiveSearchRequestScreen> {
     );
   }
 
-  /// Success card
+  Widget _buildPriceRequestsSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Предложения от менеджеров (${_priceRequests.length})',
+          style: TextStyle(fontSize: 18.sp, fontWeight: FontWeight.w700, color: Colors.black87),
+        ),
+        SizedBox(height: 12.h),
+        ..._priceRequests.map((request) => _buildPriceRequestCard(request)),
+      ],
+    );
+  }
+
+  /// ⬅️ FIXED: Используем русские статусы из модели
+  Widget _buildPriceRequestCard(PriceRequest request) {
+    // ⬅️ БЕРЕМ СТАТУС ИЗ МОДЕЛИ (уже на русском!)
+    final statusText = request.statusTextRussian;
+
+    Color statusColor;
+    IconData statusIcon;
+
+    switch (request.clientResponseStatus) {
+      case 'WAITING':
+        statusColor = Colors.orange;
+        statusIcon = Icons.schedule;
+        break;
+      case 'ACCEPTED':
+        statusColor = Colors.green;
+        statusIcon = Icons.check_circle;
+        break;
+      case 'REJECTED':
+        statusColor = Colors.red;
+        statusIcon = Icons.cancel;
+        break;
+      default:
+        statusColor = Colors.grey;
+        statusIcon = Icons.info;
+    }
+
+    return Container(
+      margin: EdgeInsets.only(bottom: 12.h),
+      padding: EdgeInsets.all(16.w),
+      decoration: BoxDecoration(
+        color: statusColor.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(12.r),
+        border: Border.all(color: statusColor, width: 2),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(statusIcon, color: statusColor, size: 20.sp),
+              SizedBox(width: 8.w),
+              Text(
+                statusText,
+                style: TextStyle(fontSize: 14.sp, fontWeight: FontWeight.w600, color: statusColor),
+              ),
+            ],
+          ),
+          SizedBox(height: 12.h),
+          Text(
+            request.safeAccommodationName,
+
+            style: TextStyle(fontSize: 16.sp, fontWeight: FontWeight.w700, color: Colors.black87),
+          ),
+          SizedBox(height: 4.h),
+          Text(
+            request.safeAccommodationUnitName,
+
+            style: TextStyle(fontSize: 14.sp, color: Colors.grey.shade700),
+          ),
+          SizedBox(height: 12.h),
+          Container(
+            padding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 8.h),
+            decoration: BoxDecoration(
+              color: Colors.green.shade50,
+              borderRadius: BorderRadius.circular(8.r),
+              border: Border.all(color: Colors.green),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.attach_money, color: Colors.green, size: 20.sp),
+                SizedBox(width: 4.w),
+                Text(
+                  '${request.price} тг/ночь',
+                  style: TextStyle(fontSize: 18.sp, fontWeight: FontWeight.w700, color: Colors.green),
+                ),
+              ],
+            ),
+          ),
+          if (request.clientResponseStatus == 'WAITING') ...[
+            SizedBox(height: 16.h),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => _rejectPriceRequest(request),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.red,
+                      side: BorderSide(color: Colors.red, width: 1.5),
+                      padding: EdgeInsets.symmetric(vertical: 12.h),
+                    ),
+                    child: Text('Отклонить', style: TextStyle(fontWeight: FontWeight.w600)),
+                  ),
+                ),
+                SizedBox(width: 12.w),
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: () => _acceptPriceRequest(request),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green,
+                      foregroundColor: Colors.white,
+                      padding: EdgeInsets.symmetric(vertical: 12.h),
+                    ),
+                    child: Text('Принять', style: TextStyle(fontWeight: FontWeight.w600, color: Colors.white)),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   Widget _buildSuccessCard() {
     return Container(
       padding: EdgeInsets.all(20.w),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            const Color(0xFF295CDB),
-            const Color(0xFF1E46A3),
-          ],
-        ),
+        gradient: LinearGradient(colors: [const Color(0xFF295CDB), const Color(0xFF1E46A3)]),
         borderRadius: BorderRadius.circular(16.r),
-        boxShadow: [
-          BoxShadow(
-            color: const Color(0xFF295CDB).withOpacity(0.3),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
-          ),
-        ],
       ),
       child: Row(
         children: [
           Container(
             width: 56.w,
             height: 56.w,
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.2),
-              shape: BoxShape.circle,
-            ),
-            child: Icon(
-              Icons.check_circle_outline,
-              size: 32.sp,
-              color: Colors.white,
-            ),
+            decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), shape: BoxShape.circle),
+            child: Icon(Icons.check_circle_outline, size: 32.sp, color: Colors.white),
           ),
           SizedBox(width: 16.w),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  'Заявка успешно создана!',
-                  style: TextStyle(
-                    fontSize: 18.sp,
-                    fontWeight: FontWeight.w700,
-                    color: Colors.white,
-                  ),
-                ),
+                Text('Заявка успешно создана!',
+                    style: TextStyle(fontSize: 18.sp, fontWeight: FontWeight.w700, color: Colors.white)),
                 SizedBox(height: 4.h),
-                Text(
-                  'Ожидайте предложений от менеджеров',
-                  style: TextStyle(
-                    fontSize: 14.sp,
-                    color: Colors.white.withOpacity(0.9),
-                  ),
-                ),
+                Text('Ожидайте предложений от менеджеров',
+                    style: TextStyle(fontSize: 14.sp, color: Colors.white.withOpacity(0.9))),
               ],
             ),
           ),
@@ -600,7 +927,6 @@ class _ActiveSearchRequestScreenState extends State<ActiveSearchRequestScreen> {
     );
   }
 
-  /// Status card
   Widget _buildStatusCard() {
     final status = _request!.statusText;
     final isOpen = _request!.status == 'OPEN_TO_PRICE_REQUEST';
@@ -608,43 +934,26 @@ class _ActiveSearchRequestScreenState extends State<ActiveSearchRequestScreen> {
     return Container(
       padding: EdgeInsets.all(16.w),
       decoration: BoxDecoration(
-        color: isOpen
-            ? Colors.green.withOpacity(0.1)
-            : Colors.grey.withOpacity(0.1),
+        color: isOpen ? Colors.green.withOpacity(0.1) : Colors.grey.withOpacity(0.1),
         borderRadius: BorderRadius.circular(12.r),
-        border: Border.all(
-          color: isOpen ? Colors.green : Colors.grey,
-          width: 2,
-        ),
+        border: Border.all(color: isOpen ? Colors.green : Colors.grey, width: 2),
       ),
       child: Row(
         children: [
-          Icon(
-            isOpen ? Icons.check_circle : Icons.cancel,
-            color: isOpen ? Colors.green : Colors.grey,
-            size: 24.sp,
-          ),
+          Icon(isOpen ? Icons.check_circle : Icons.cancel,
+              color: isOpen ? Colors.green : Colors.grey, size: 24.sp),
           SizedBox(width: 12.w),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  'Статус заявки',
-                  style: TextStyle(
-                    fontSize: 12.sp,
-                    color: Colors.grey.shade600,
-                  ),
-                ),
+                Text('Статус заявки', style: TextStyle(fontSize: 12.sp, color: Colors.grey.shade600)),
                 SizedBox(height: 4.h),
-                Text(
-                  status,
-                  style: TextStyle(
-                    fontSize: 16.sp,
-                    fontWeight: FontWeight.w700,
-                    color: isOpen ? Colors.green : Colors.grey.shade700,
-                  ),
-                ),
+                Text(status,
+                    style: TextStyle(
+                        fontSize: 16.sp,
+                        fontWeight: FontWeight.w700,
+                        color: isOpen ? Colors.green : Colors.grey.shade700)),
               ],
             ),
           ),
@@ -653,41 +962,24 @@ class _ActiveSearchRequestScreenState extends State<ActiveSearchRequestScreen> {
     );
   }
 
-  /// Main info card
+  /// ⬅️ FIXED: Добавлен тип размещения на русском
   Widget _buildMainInfoCard() {
-    final checkIn = DateFormat('dd MMM yyyy', 'ru').format(
-      DateTime.parse(_request!.checkInDate),
-    );
-    final checkOut = DateFormat('dd MMM yyyy', 'ru').format(
-      DateTime.parse(_request!.checkOutDate),
-    );
+    final checkIn = DateFormat('dd MMM yyyy', 'ru').format(DateTime.parse(_request!.checkInDate));
+    final checkOut = DateFormat('dd MMM yyyy', 'ru').format(DateTime.parse(_request!.checkOutDate));
 
     return Container(
       padding: EdgeInsets.all(20.w),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16.r),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 10,
-            offset: const Offset(0, 2),
-          ),
-        ],
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10)],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'Основная информация',
-            style: TextStyle(
-              fontSize: 18.sp,
-              fontWeight: FontWeight.w700,
-              color: Colors.black87,
-            ),
-          ),
+          Text('Основная информация',
+              style: TextStyle(fontSize: 18.sp, fontWeight: FontWeight.w700, color: Colors.black87)),
           SizedBox(height: 16.h),
-
           _buildInfoRow(Icons.calendar_today, 'Заезд', checkIn),
           SizedBox(height: 12.h),
           _buildInfoRow(Icons.calendar_today_outlined, 'Выезд', checkOut),
@@ -695,60 +987,21 @@ class _ActiveSearchRequestScreenState extends State<ActiveSearchRequestScreen> {
           _buildInfoRow(Icons.people, 'Гостей', '${_request!.countOfPeople} чел'),
           SizedBox(height: 12.h),
           _buildInfoRow(Icons.attach_money, 'Бюджет', '${_request!.price} тг/ночь'),
-
-          if (_request!.fromRating != null || _request!.toRating != null) ...[
-            SizedBox(height: 12.h),
-            _buildInfoRow(
-              Icons.star,
-              'Рейтинг',
-              '${_request!.fromRating ?? 0} - ${_request!.toRating ?? 5}',
-            ),
-          ],
-
           SizedBox(height: 12.h),
-          _buildInfoRow(
-            Icons.home,
-            'Тип жилья',
-            _request!.unitTypesText,
-          ),
-
-          if (_request!.oneNight) ...[
-            SizedBox(height: 12.h),
-            Container(
-              padding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 6.h),
-              decoration: BoxDecoration(
-                color: const Color(0xFF295CDB).withOpacity(0.1),
-                borderRadius: BorderRadius.circular(8.r),
-              ),
-              child: Text(
-                'Одна ночь',
-                style: TextStyle(
-                  fontSize: 12.sp,
-                  fontWeight: FontWeight.w600,
-                  color: const Color(0xFF295CDB),
-                ),
-              ),
-            ),
-          ],
+          // ⬅️ НОВОЕ: Тип размещения
+          _buildInfoRow(Icons.hotel, 'Тип', _request!.unitTypesText),
         ],
       ),
     );
   }
 
-  /// Districts card
   Widget _buildDistrictsCard() {
     return Container(
       padding: EdgeInsets.all(20.w),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16.r),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 10,
-            offset: const Offset(0, 2),
-          ),
-        ],
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10)],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -757,254 +1010,71 @@ class _ActiveSearchRequestScreenState extends State<ActiveSearchRequestScreen> {
             children: [
               Icon(Icons.location_on, color: const Color(0xFF295CDB), size: 20.sp),
               SizedBox(width: 8.w),
-              Text(
-                'Районы',
-                style: TextStyle(
-                  fontSize: 16.sp,
-                  fontWeight: FontWeight.w700,
-                  color: Colors.black87,
-                ),
-              ),
+              Text('Районы', style: TextStyle(fontSize: 16.sp, fontWeight: FontWeight.w700)),
             ],
           ),
           SizedBox(height: 12.h),
           Wrap(
             spacing: 8.w,
             runSpacing: 8.h,
-            children: _request!.districts.map((district) {
-              return Container(
-                padding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 6.h),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF295CDB).withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(8.r),
-                  border: Border.all(
-                    color: const Color(0xFF295CDB).withOpacity(0.3),
-                  ),
-                ),
-                child: Text(
-                  district.name,
-                  style: TextStyle(
-                    fontSize: 14.sp,
-                    fontWeight: FontWeight.w600,
-                    color: const Color(0xFF295CDB),
-                  ),
-                ),
-              );
-            }).toList(),
+            children: _request!.districts
+                .map((d) => Container(
+              padding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 6.h),
+              decoration: BoxDecoration(
+                color: const Color(0xFF295CDB).withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8.r),
+              ),
+              child: Text(d.name, style: TextStyle(fontSize: 14.sp, fontWeight: FontWeight.w600)),
+            ))
+                .toList(),
           ),
         ],
       ),
     );
   }
 
-  /// Services card
-  Widget _buildServicesCard() {
-    return Container(
-      padding: EdgeInsets.all(20.w),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16.r),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 10,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(Icons.room_service, color: const Color(0xFF295CDB), size: 20.sp),
-              SizedBox(width: 8.w),
-              Text(
-                'Услуги',
-                style: TextStyle(
-                  fontSize: 16.sp,
-                  fontWeight: FontWeight.w700,
-                  color: Colors.black87,
-                ),
-              ),
-            ],
-          ),
-          SizedBox(height: 12.h),
-          ..._request!.services.map((service) {
-            return Padding(
-              padding: EdgeInsets.only(bottom: 8.h),
-              child: Row(
-                children: [
-                  Icon(Icons.check_circle, color: Colors.green, size: 16.sp),
-                  SizedBox(width: 8.w),
-                  Text(
-                    service.value,
-                    style: TextStyle(
-                      fontSize: 14.sp,
-                      color: Colors.black87,
-                    ),
-                  ),
-                ],
-              ),
-            );
-          }).toList(),
-        ],
-      ),
-    );
-  }
-
-  /// Conditions card
-  Widget _buildConditionsCard() {
-    return Container(
-      padding: EdgeInsets.all(20.w),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16.r),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 10,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(Icons.info_outline, color: const Color(0xFF295CDB), size: 20.sp),
-              SizedBox(width: 8.w),
-              Text(
-                'Условия проживания',
-                style: TextStyle(
-                  fontSize: 16.sp,
-                  fontWeight: FontWeight.w700,
-                  color: Colors.black87,
-                ),
-              ),
-            ],
-          ),
-          SizedBox(height: 12.h),
-          ..._request!.conditions.map((condition) {
-            return Padding(
-              padding: EdgeInsets.only(bottom: 8.h),
-              child: Row(
-                children: [
-                  Icon(Icons.check_circle, color: Colors.green, size: 16.sp),
-                  SizedBox(width: 8.w),
-                  Text(
-                    condition.value,
-                    style: TextStyle(
-                      fontSize: 14.sp,
-                      color: Colors.black87,
-                    ),
-                  ),
-                ],
-              ),
-            );
-          }).toList(),
-        ],
-      ),
-    );
-  }
-
-  /// 🔘 Action buttons (Update Price + Cancel + View Offers)
   Widget _buildActionButtons() {
-    final canModify = _request!.status == 'OPEN_TO_PRICE_REQUEST';
+    // Можно изменять цену и отменять заявку,
+    // пока она открыта или ожидает предложений
+    // и ещё НЕТ принятого предложения.
+    final hasAcceptedOffer = _priceRequests.any(
+      (pr) => pr.clientResponseStatus == 'ACCEPTED',
+    );
+
+    final canModify = (_request!.status == 'OPEN_TO_PRICE_REQUEST' ||
+            _request!.status == 'PRICE_REQUEST_PENDING') &&
+        !hasAcceptedOffer;
 
     if (!canModify) return const SizedBox.shrink();
 
     return Column(
       children: [
-        // View Price Requests button
-        SizedBox(
-          width: double.infinity,
-          child: ElevatedButton.icon(
-            onPressed: () async {
-              // Navigate to Price Requests screen
-              await Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => PriceRequestsScreen(
-                    searchRequest: _request!,
-                  ),
-                ),
-              );
-              // ⬅️ ИЗМЕНЕНО: Reload с проверкой новых предложений
-              _loadRequest(showToastForNewOffers: true);
-            },
-            icon: Icon(Icons.local_offer, size: 20.sp, color: Colors.white),
-            label: Text(
-              'Посмотреть предложения',
-              style: TextStyle(
-                fontSize: 16.sp,
-                fontWeight: FontWeight.w600,
-                color: Colors.white,
-              ),
-            ),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.purple,
-              foregroundColor: Colors.white,
-              padding: EdgeInsets.symmetric(vertical: 14.h),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12.r),
-              ),
-            ),
-          ),
-        ),
-
-        SizedBox(height: 12.h),
-
-        // Update Price button
         SizedBox(
           width: double.infinity,
           child: ElevatedButton.icon(
             onPressed: _updatePrice,
             icon: Icon(Icons.edit, size: 20.sp, color: Colors.white),
-            label: Text(
-              'Изменить цену',
-              style: TextStyle(
-                fontSize: 16.sp,
-                fontWeight: FontWeight.w600,
-                color: Colors.white,
-              ),
-            ),
+            label: Text('Изменить цену',
+                style: TextStyle(fontSize: 16.sp, fontWeight: FontWeight.w600, color: Colors.white)),
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFF295CDB),
-              foregroundColor: Colors.white,
               padding: EdgeInsets.symmetric(vertical: 14.h),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12.r),
-              ),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12.r)),
             ),
           ),
         ),
-
         SizedBox(height: 12.h),
-
-        // Cancel button
         SizedBox(
           width: double.infinity,
           child: OutlinedButton.icon(
             onPressed: _cancelRequest,
             icon: Icon(Icons.cancel, size: 20.sp, color: Colors.white),
-            label: Text(
-              'Отменить заявку',
-              style: TextStyle(
-                fontSize: 16.sp,
-                fontWeight: FontWeight.w600,
-                color: Colors.white,
-              ),
-            ),
+            label: Text('Отменить заявку',
+                style: TextStyle(fontSize: 16.sp, fontWeight: FontWeight.w600, color: Colors.white)),
             style: OutlinedButton.styleFrom(
               backgroundColor: Colors.red,
-              foregroundColor: Colors.white,
               padding: EdgeInsets.symmetric(vertical: 14.h),
-              side: const BorderSide(color: Colors.red, width: 2),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12.r),
-              ),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12.r)),
             ),
           ),
         ),
@@ -1012,7 +1082,6 @@ class _ActiveSearchRequestScreenState extends State<ActiveSearchRequestScreen> {
     );
   }
 
-  /// Info row widget
   Widget _buildInfoRow(IconData icon, String label, String value) {
     return Row(
       children: [
@@ -1022,19 +1091,14 @@ class _ActiveSearchRequestScreenState extends State<ActiveSearchRequestScreen> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 14.sp,
-                  color: Colors.grey.shade600,
-                ),
-              ),
-              Text(
-                value,
-                style: TextStyle(
-                  fontSize: 14.sp,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.black87,
+              Text(label, style: TextStyle(fontSize: 14.sp, color: Colors.grey.shade600)),
+              Flexible(
+                child: Text(
+                  value,
+                  style: TextStyle(fontSize: 14.sp, fontWeight: FontWeight.w600, color: Colors.black87),
+                  textAlign: TextAlign.right,
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 2,
                 ),
               ),
             ],
@@ -1043,4 +1107,15 @@ class _ActiveSearchRequestScreenState extends State<ActiveSearchRequestScreen> {
       ],
     );
   }
+}
+
+/// Модель для кэширования предложений с временем добавления
+class _CachedPriceRequest {
+  final PriceRequest request;
+  final DateTime addedAt;
+
+  _CachedPriceRequest({
+    required this.request,
+    required this.addedAt,
+  });
 }

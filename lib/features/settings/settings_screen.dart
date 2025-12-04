@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import '../../data/models/settings/app_settings.dart';
 import '../../data/services/settings_storage.dart';
+import 'privacy_policy_screen.dart';
+import 'support_screen.dart';
 
 /// Settings Screen with persistent storage
 /// All settings are automatically saved and loaded
@@ -105,6 +107,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await SettingsStorage.updateVibration(value);
   }
 
+  /// Update and save new offer notifications
+  Future<void> _updateNewOfferNotifications(bool value) async {
+    setState(() {
+      _settings = _settings.copyWith(newOfferNotificationsEnabled: value);
+    });
+
+    await SettingsStorage.updateNewOfferNotifications(value);
+  }
+
+  /// Update and save reservation status notifications
+  Future<void> _updateReservationStatusNotifications(bool value) async {
+    setState(() {
+      _settings = _settings.copyWith(reservationStatusNotificationsEnabled: value);
+    });
+
+    await SettingsStorage.updateReservationStatusNotifications(value);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -165,6 +185,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
               _updateEmailNotifications,
               enabled: _settings.notificationsEnabled,
             ),
+            SizedBox(height: 8.h),
+            _buildSwitchTile(
+              'Новые ответы на заявки',
+              'Уведомления о новых предложениях от менеджеров',
+              _settings.newOfferNotificationsEnabled,
+              _updateNewOfferNotifications,
+              enabled: _settings.notificationsEnabled,
+            ),
+            SizedBox(height: 8.h),
+            _buildSwitchTile(
+              'Изменение статуса бронирования',
+              'Уведомления об изменении статуса бронирования',
+              _settings.reservationStatusNotificationsEnabled,
+              _updateReservationStatusNotifications,
+              enabled: _settings.notificationsEnabled,
+            ),
 
             SizedBox(height: 32.h),
 
@@ -194,7 +230,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
               'Политика конфиденциальности',
               Icons.privacy_tip_outlined,
                   () {
-                // TODO: Open privacy policy
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const PrivacyPolicyScreen(),
+                  ),
+                );
               },
             ),
             SizedBox(height: 8.h),
@@ -202,7 +243,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
               'Поддержка',
               Icons.help_outline,
                   () {
-                // TODO: Open support
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const SupportScreen(),
+                  ),
+                );
               },
             ),
             SizedBox(height: 8.h),

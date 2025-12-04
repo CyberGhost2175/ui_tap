@@ -1,8 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
+import '../../data/models/reservations/reservation_models.dart';
+import '../../data/services/reservation_api_service.dart';
+import '../../data/services/notification_service.dart';
+import 'reservation_detail_screen.dart';
 
 /// BookingsScreen - displays active and history bookings
-/// Shows empty state when no bookings available
+/// ⬅️ FIXED: Overflow + status filtering + Russian status names
 class BookingsScreen extends StatefulWidget {
   const BookingsScreen({Key? key}) : super(key: key);
 
@@ -13,21 +19,88 @@ class BookingsScreen extends StatefulWidget {
 class _BookingsScreenState extends State<BookingsScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
+  final ReservationApiService _apiService = ReservationApiService();
 
-  // Mock data - empty for now
-  final List<dynamic> _activeBookings = [];
-  final List<dynamic> _historyBookings = [];
+  List<Reservation> _allReservations = [];
+  List<Reservation> _activeBookings = [];
+  List<Reservation> _historyBookings = [];
+  
+  // Для отслеживания изменений статуса
+  Map<int, String> _previousStatuses = {};
+
+  bool _isLoading = true;
+  String? _error;
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+    _loadReservations();
   }
 
   @override
   void dispose() {
     _tabController.dispose();
     super.dispose();
+  }
+
+  /// ⬅️ FIXED: Фильтрация по статусам
+  /// Активные: APPROVED
+  /// История: REJECTED, FINISHED_SUCCESSFUL
+  Future<void> _loadReservations() async {
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+
+    try {
+      final reservations = await _apiService.getMyReservations();
+
+      // Активные: APPROVED + WAITING_TO_APPROVE
+      final active = reservations.where((r) =>
+          r.status == 'APPROVED' ||
+          r.status == 'WAITING_TO_APPROVE').toList();
+
+      // История: REJECTED + FINISHED_SUCCESSFUL (+ прочие завершённые статусы)
+      final history = reservations.where((r) =>
+          r.status == 'REJECTED' ||
+          r.status == 'FINISHED_SUCCESSFUL' ||
+          r.status == 'CLIENT_DIDNT_CAME' ||
+          r.status == 'CANCELED').toList();
+
+      // Проверяем изменения статуса и показываем уведомления
+      for (var reservation in reservations) {
+        final previousStatus = _previousStatuses[reservation.id];
+        if (previousStatus != null && previousStatus != reservation.status) {
+          // Статус изменился - показываем уведомление
+          final statusInfo = _getStatusInfo(reservation.status);
+          await NotificationService().showReservationStatusNotification(
+            reservationId: reservation.id,
+            statusText: statusInfo['text'],
+            accommodationName: reservation.accommodationName,
+          );
+          print('📬 [BOOKINGS] Status changed for reservation ${reservation.id}: $previousStatus -> ${reservation.status}');
+        }
+        _previousStatuses[reservation.id] = reservation.status;
+      }
+
+      setState(() {
+        _allReservations = reservations;
+        _activeBookings = active;
+        _historyBookings = history;
+        _isLoading = false;
+      });
+
+      print('✅ [BOOKINGS] Loaded ${reservations.length} reservations');
+      print('   Active (APPROVED + WAITING_TO_APPROVE): ${active.length}');
+      print('   History (REJECTED + FINISHED_SUCCESSFUL + OTHER_FINISHED): ${history.length}');
+    } catch (e) {
+      setState(() {
+        _error = e.toString().replaceAll('Exception: ', '');
+        _isLoading = false;
+      });
+      print('❌ [BOOKINGS] Error: $e');
+    }
   }
 
   @override
@@ -47,25 +120,65 @@ class _BookingsScreenState extends State<BookingsScreen>
           ),
         ),
       ),
-      body: Column(
+      body: _isLoading
+          ? Center(child: CircularProgressIndicator(color: const Color(0xFF295CDB)))
+          : _error != null
+          ? _buildErrorState()
+          : Column(
         children: [
-          // Tab selector
           _buildTabSelector(),
           SizedBox(height: 16.h),
-
-          // Tab views
           Expanded(
             child: TabBarView(
               controller: _tabController,
               children: [
-                // Active bookings tab
                 _buildBookingsList(_activeBookings, isActive: true),
-                // History bookings tab
                 _buildBookingsList(_historyBookings, isActive: false),
               ],
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// Error state
+  Widget _buildErrorState() {
+    return Center(
+      child: Padding(
+        padding: EdgeInsets.all(24.w),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.error_outline, size: 64.sp, color: Colors.red),
+            SizedBox(height: 16.h),
+            Text(
+              'Ошибка загрузки',
+              style: TextStyle(
+                fontSize: 18.sp,
+                fontWeight: FontWeight.w700,
+                color: Colors.black87,
+              ),
+            ),
+            SizedBox(height: 8.h),
+            Text(
+              _error!,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 14.sp,
+                color: Colors.grey.shade600,
+              ),
+            ),
+            SizedBox(height: 24.h),
+            ElevatedButton(
+              onPressed: _loadReservations,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF295CDB),
+              ),
+              child: const Text('Повторить'),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -113,29 +226,422 @@ class _BookingsScreenState extends State<BookingsScreen>
   }
 
   /// Bookings list or empty state
-  Widget _buildBookingsList(List<dynamic> bookings, {required bool isActive}) {
+  Widget _buildBookingsList(List<Reservation> bookings, {required bool isActive}) {
     if (bookings.isEmpty) {
       return _buildEmptyState(isActive);
     }
 
-    // TODO: Build actual booking cards when data is available
-    return ListView.builder(
-      padding: EdgeInsets.symmetric(horizontal: 20.w, vertical: 16.h),
-      itemCount: bookings.length,
-      itemBuilder: (context, index) {
-        // Placeholder for booking card
-        return Container(
-          margin: EdgeInsets.only(bottom: 16.h),
-          padding: EdgeInsets.all(16.w),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(16.r),
-            border: Border.all(color: Colors.grey.shade200),
-          ),
-          child: const Text('Booking card'),
-        );
-      },
+    return RefreshIndicator(
+      onRefresh: _loadReservations,
+      child: ListView.builder(
+        padding: EdgeInsets.symmetric(horizontal: 20.w, vertical: 16.h),
+        itemCount: bookings.length,
+        itemBuilder: (context, index) {
+          return _buildBookingCard(bookings[index]);
+        },
+      ),
     );
+  }
+
+  /// ⬅️ FIXED: Карточка бронирования (overflow fix)
+  Widget _buildBookingCard(Reservation reservation) {
+    return GestureDetector(
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => ReservationDetailScreen(
+              reservationId: reservation.id,
+            ),
+          ),
+        ).then((_) {
+          // Обновляем список после возврата
+          _loadReservations();
+        });
+      },
+      child: _buildBookingCardContent(reservation),
+    );
+  }
+
+  Widget _buildBookingCardContent(Reservation reservation) {
+    final checkIn = DateFormat('dd MMM yyyy', 'ru').format(reservation.checkInDate);
+    final checkOut = DateFormat('dd MMM yyyy', 'ru').format(reservation.checkOutDate);
+    final nights = reservation.checkOutDate.difference(reservation.checkInDate).inDays;
+
+    // ⬅️ FIXED: Статусы на русском
+    final statusInfo = _getStatusInfo(reservation.status);
+
+    return Container(
+      margin: EdgeInsets.only(bottom: 16.h),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16.r),
+        border: Border.all(color: Colors.grey.shade200),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header с фото и основной инфо
+          Padding(
+            padding: EdgeInsets.all(16.w),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Placeholder изображение
+                Container(
+                  width: 80.w,
+                  height: 80.w,
+                  decoration: BoxDecoration(
+                    color: Colors.blue.shade50,
+                    borderRadius: BorderRadius.circular(12.r),
+                  ),
+                  child: Icon(
+                    Icons.hotel,
+                    size: 40.sp,
+                    color: const Color(0xFF295CDB),
+                  ),
+                ),
+                SizedBox(width: 12.w),
+
+                // ⬅️ FIXED: Expanded для предотвращения overflow
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Название отеля
+                      Text(
+                        reservation.accommodationName,
+                        style: TextStyle(
+                          fontSize: 16.sp,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.black87,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      SizedBox(height: 4.h),
+
+                      // Адрес
+                      Row(
+                        children: [
+                          Icon(Icons.location_on, size: 14.sp, color: Colors.grey.shade600),
+                          SizedBox(width: 4.w),
+                          Expanded(
+                            child: Text(
+                              'Астана, Казахстан',
+                              style: TextStyle(
+                                fontSize: 12.sp,
+                                color: Colors.grey.shade600,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                      SizedBox(height: 8.h),
+
+                      // Цена
+                      Text(
+                        '${reservation.price} тг /ночь',
+                        style: TextStyle(
+                          fontSize: 16.sp,
+                          fontWeight: FontWeight.w700,
+                          color: const Color(0xFF295CDB),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                SizedBox(width: 8.w),
+
+                // Рейтинг
+                Container(
+                  padding: EdgeInsets.symmetric(horizontal: 8.w, vertical: 4.h),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.shade50,
+                    borderRadius: BorderRadius.circular(8.r),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.star, color: Colors.orange, size: 14.sp),
+                      SizedBox(width: 4.w),
+                      Text(
+                        '5.0',
+                        style: TextStyle(
+                          fontSize: 12.sp,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.orange,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          Divider(height: 1, color: Colors.grey.shade200),
+
+          // ⬅️ FIXED: Статус на русском + цвета
+          Container(
+            padding: EdgeInsets.all(16.w),
+            color: statusInfo['color'].withOpacity(0.1),
+            child: Row(
+              children: [
+                Icon(
+                  statusInfo['icon'],
+                  color: statusInfo['color'],
+                  size: 20.sp,
+                ),
+                SizedBox(width: 8.w),
+                Text(
+                  statusInfo['text'],
+                  style: TextStyle(
+                    fontSize: 14.sp,
+                    fontWeight: FontWeight.w600,
+                    color: statusInfo['color'],
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // Детали
+          Padding(
+            padding: EdgeInsets.all(16.w),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Детали',
+                  style: TextStyle(
+                    fontSize: 16.sp,
+                    fontWeight: FontWeight.w700,
+                    color: const Color(0xFF295CDB),
+                  ),
+                ),
+                SizedBox(height: 12.h),
+
+                _buildDetailRow(
+                  Icons.calendar_today,
+                  'Даты',
+                  '$checkIn - $checkOut',
+                ),
+                SizedBox(height: 4.h),
+                Padding(
+                  padding: EdgeInsets.only(left: 26.w),
+                  child: Text(
+                    '$nights ${_nightsText(nights)}',
+                    style: TextStyle(
+                      fontSize: 12.sp,
+                      color: Colors.grey.shade600,
+                    ),
+                  ),
+                ),
+                SizedBox(height: 8.h),
+
+                _buildDetailRow(
+                  Icons.people,
+                  'Гостей',
+                  '${reservation.guestCount}',
+                ),
+                SizedBox(height: 8.h),
+
+                _buildDetailRow(
+                  Icons.hotel,
+                  'Номер',
+                  reservation.accommodationUnitName,
+                ),
+              ],
+            ),
+          ),
+
+          Divider(height: 1, color: Colors.grey.shade200),
+
+          // Детали оплаты
+          Padding(
+            padding: EdgeInsets.all(16.w),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Детали оплаты',
+                  style: TextStyle(
+                    fontSize: 16.sp,
+                    fontWeight: FontWeight.w700,
+                    color: const Color(0xFF295CDB),
+                  ),
+                ),
+                SizedBox(height: 12.h),
+
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text('Цена', style: TextStyle(fontSize: 14.sp, color: Colors.black87)),
+                    Text('${reservation.price} тг', style: TextStyle(fontSize: 14.sp, fontWeight: FontWeight.w600)),
+                  ],
+                ),
+                SizedBox(height: 8.h),
+
+                Divider(color: Colors.grey.shade300),
+                SizedBox(height: 8.h),
+
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'Итого',
+                      style: TextStyle(
+                        fontSize: 16.sp,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.black87,
+                      ),
+                    ),
+                    Text(
+                      '${reservation.price} тг',
+                      style: TextStyle(
+                        fontSize: 16.sp,
+                        fontWeight: FontWeight.w700,
+                        color: const Color(0xFF295CDB),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+
+          Divider(height: 1, color: Colors.grey.shade200),
+
+          // Построить маршрут
+
+        ],
+      ),
+    );
+  }
+
+  /// ⬅️ NEW: Получение информации о статусе (русский текст + цвет + иконка)
+  Map<String, dynamic> _getStatusInfo(String status) {
+    switch (status) {
+      case 'WAITING_TO_APPROVE':
+        return {
+          'text': 'Ожидает подтверждения',
+          'color': Colors.orange,
+          'icon': Icons.access_time,
+        };
+      case 'APPROVED':
+        return {
+          'text': 'Подтверждено',
+          'color': Colors.green,
+          'icon': Icons.check_circle,
+        };
+      case 'REJECTED':
+        return {
+          'text': 'Отклонено',
+          'color': Colors.red,
+          'icon': Icons.cancel,
+        };
+      case 'FINISHED_SUCCESSFUL':
+        return {
+          'text': 'Завершено успешно',
+          'color': Colors.blue,
+          'icon': Icons.task_alt,
+        };
+      case 'PENDING':
+        return {
+          'text': 'Ожидает подтверждения',
+          'color': Colors.orange,
+          'icon': Icons.schedule,
+        };
+      default:
+        return {
+          'text': status,
+          'color': Colors.grey,
+          'icon': Icons.info,
+        };
+    }
+  }
+
+  /// ⬅️ FIXED: Detail row без overflow
+  Widget _buildDetailRow(IconData icon, String label, String value) {
+    return Row(
+      children: [
+        Icon(icon, size: 18.sp, color: Colors.grey.shade600),
+        SizedBox(width: 8.w),
+        Expanded(
+          child: Row(
+            children: [
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 14.sp,
+                  color: Colors.black87,
+                ),
+              ),
+              Spacer(),
+              Flexible(
+                child: Text(
+                  value,
+                  style: TextStyle(
+                    fontSize: 14.sp,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.black87,
+                  ),
+                  textAlign: TextAlign.right,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Helper для текста ночей
+  String _nightsText(int nights) {
+    if (nights == 1) return 'ночь';
+    if (nights >= 2 && nights <= 4) return 'ночи';
+    return 'ночей';
+  }
+
+  /// Open 2GIS
+  Future<void> _open2GIS() async {
+    final url = Uri.parse('dgis://2gis.ru/routeSearch/rsType/car/to/');
+    if (await canLaunchUrl(url)) {
+      await launchUrl(url, mode: LaunchMode.externalApplication);
+    } else {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Не удалось открыть 2GIS')),
+        );
+      }
+    }
+  }
+
+  /// Open Yandex GO
+  Future<void> _openYandexGO() async {
+    final url = Uri.parse('yandexnavi://');
+    if (await canLaunchUrl(url)) {
+      await launchUrl(url, mode: LaunchMode.externalApplication);
+    } else {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Не удалось открыть Yandex GO')),
+        );
+      }
+    }
   }
 
   /// Empty state widget
@@ -144,7 +650,6 @@ class _BookingsScreenState extends State<BookingsScreen>
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          // Icon
           Container(
             width: 120.w,
             height: 120.w,
@@ -159,8 +664,6 @@ class _BookingsScreenState extends State<BookingsScreen>
             ),
           ),
           SizedBox(height: 24.h),
-
-          // Text
           Text(
             'Брони отсутствуют',
             style: TextStyle(
@@ -184,31 +687,6 @@ class _BookingsScreenState extends State<BookingsScreen>
               ),
             ),
           ),
-          SizedBox(height: 32.h),
-
-          // Action button
-          if (isActive)
-            ElevatedButton(
-              onPressed: () {
-                // Navigate to home tab (search)
-                // This will be handled by parent MainScreen
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF295CDB),
-                padding: EdgeInsets.symmetric(horizontal: 40.w, vertical: 14.h),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12.r),
-                ),
-              ),
-              child: Text(
-                'Найти жильё',
-                style: TextStyle(
-                  fontSize: 16.sp,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.white,
-                ),
-              ),
-            ),
         ],
       ),
     );

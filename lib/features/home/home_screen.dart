@@ -33,48 +33,59 @@ class _BookingSearchScreenState extends State<BookingSearchScreen> {
   String _filter = 'Отель';
   DateTime _checkIn = DateTime.now();
   DateTime _checkOut = DateTime.now().add(const Duration(days: 1));
-  String _customPrice = ''; // ⬅️ ИСПРАВЛЕНО: Пустая строка по умолчанию
+  String _customPrice = '';
 
   bool _isSelectingLocation = false;
   final GlobalKey _mapKey = GlobalKey();
   final GlobalKey<SearchPanelWidgetState> _searchPanelKey =
   GlobalKey<SearchPanelWidgetState>();
 
-  // ⬅️ НОВОЕ: Активные заявки (список)
+  // API Service
+  final SearchRequestApiService _apiService = SearchRequestApiService();
+
+  // Active requests
   List<SearchRequest> _activeRequests = [];
   bool _isLoadingActiveRequest = false;
 
   @override
   void initState() {
     super.initState();
-    _loadActiveRequest();
+    _loadActiveRequest(); // ⬅️ FIXED: Загружаем заявки сразу при входе
   }
 
-  /// 📥 Загрузка всех активных заявок
+  /// ⬅️ FIXED: Загрузка всех заявок БЕЗ фильтрации + убираем FINISHED
   Future<void> _loadActiveRequest() async {
-    setState(() => _isLoadingActiveRequest = true);
+    print('🔄 [HOME] Loading user requests...');
+
+    setState(() {
+      _isLoadingActiveRequest = true;
+    });
 
     try {
-      final apiService = SearchRequestApiService();
-      final requests = await apiService.getAllSearchRequests(
+      final requests = await _apiService.getAllSearchRequests(
         page: 0,
-        size: 20, // Загружаем до 20 заявок
+        size: 20,
         sortBy: 'id',
         sortDirection: 'desc',
       );
 
-      // Берём только активные заявки (не отменённые и не закрытые)
+      // ⬅️ FIXED: Убираем FINISHED заявки, показываем ВСЕ остальные
+      final filteredRequests = requests.where((r) {
+        return !r.status.contains('FINISHED');
+      }).toList();
+
       setState(() {
-        _activeRequests = requests;  // ← Все заявки (не фильтруем!)
+        _activeRequests = filteredRequests;
         _isLoadingActiveRequest = false;
       });
 
-      print('✅ [HOME] My requests loaded: ${_activeRequests.length}');
+      print('✅ [HOME] Loaded ${filteredRequests.length} requests (without FINISHED)');
 
-
-      print('✅ [HOME] Active requests loaded: ${_activeRequests.length}');
+      for (var req in filteredRequests) {
+        print('   Request ${req.id}: ${req.status}');
+      }
     } catch (e) {
-      print('❌ [HOME] Error loading active requests: $e');
+      print('❌ [HOME] Error loading requests: $e');
       setState(() {
         _activeRequests = [];
         _isLoadingActiveRequest = false;
@@ -107,14 +118,14 @@ class _BookingSearchScreenState extends State<BookingSearchScreen> {
   Future<void> _performSearch() async {
     print('🔍 [SEARCH] Starting search...');
 
-    // ⬅️ НОВОЕ: ВАЛИДАЦИЯ ВСЕХ ПОЛЕЙ
+    // Валидация
     final validationError = _validateSearchFields();
     if (validationError != null) {
       _showValidationError(validationError);
       return;
     }
 
-    // Показываем loader
+    // Loader
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -144,7 +155,6 @@ class _BookingSearchScreenState extends State<BookingSearchScreen> {
     );
 
     try {
-      // ⬅️ ИЗМЕНЕНО: Используем новый метод getSelectedDistrictIds()
       final searchPanelState = _searchPanelKey.currentState;
       List<int> selectedDistrictIds = [];
 
@@ -152,9 +162,8 @@ class _BookingSearchScreenState extends State<BookingSearchScreen> {
         selectedDistrictIds = searchPanelState.getSelectedDistrictIds();
       }
 
-      // Эта проверка уже не нужна, т.к. валидация выше
       if (selectedDistrictIds.isEmpty) {
-        print('⚠️ [SEARCH] No districts selected after validation - should not happen');
+        print('⚠️ [SEARCH] No districts selected');
         selectedDistrictIds = [1];
       }
 
@@ -162,7 +171,6 @@ class _BookingSearchScreenState extends State<BookingSearchScreen> {
       final checkOutDate = DateFormat('yyyy-MM-dd').format(_checkOut);
       final price = int.tryParse(_customPrice.replaceAll(RegExp(r'[^\d]'), '')) ?? 20000;
 
-      // ⬅️ ИЗМЕНЕНО: Правильная конвертация фильтра
       final unitTypes = _filter == 'Все'
           ? ['HOTEL_ROOM', 'APARTMENT']
           : _filter == 'Отель'
@@ -182,17 +190,14 @@ class _BookingSearchScreenState extends State<BookingSearchScreen> {
       );
 
       print('📤 [SEARCH] Request: ${request.toJson()}');
-      print('📍 [SEARCH] Districts: $selectedDistrictIds (${selectedDistrictIds.length} districts)');
 
-      final apiService = SearchRequestApiService();
-      final result = await apiService.createSearchRequest(request);
+      final result = await _apiService.createSearchRequest(request);
 
       print('✅ [SEARCH] Success! Request ID: ${result.id}');
 
-      // Закрываем loader
-      Navigator.pop(context);
+      Navigator.pop(context); // Close loader
 
-      // ⬅️ ИЗМЕНЕНО: Показываем заявку, а затем возвращаемся на главный
+      // Navigate to request details
       await Navigator.push(
         context,
         MaterialPageRoute(
@@ -202,12 +207,11 @@ class _BookingSearchScreenState extends State<BookingSearchScreen> {
         ),
       );
 
-      // ⬅️ НОВОЕ: После возврата обновляем активную заявку и сворачиваем панель
+      // ⬅️ FIXED: Обновляем заявки после возврата
       setState(() {
         _panelState = PanelState.collapsed;
       });
       await _loadActiveRequest();
-
     } catch (e) {
       print('❌ [SEARCH] Error: $e');
 
@@ -227,7 +231,7 @@ class _BookingSearchScreenState extends State<BookingSearchScreen> {
     }
   }
 
-  /// ⬅️ НОВОЕ: Валидация полей поиска
+  /// Валидация полей поиска
   String? _validateSearchFields() {
     // 1. Даты
     if (_checkIn.isBefore(DateTime.now().subtract(const Duration(days: 1)))) {
@@ -289,11 +293,10 @@ class _BookingSearchScreenState extends State<BookingSearchScreen> {
       return 'Максимальная цена: 1 000 000 тг/ночь';
     }
 
-    // Всё ОК
     return null;
   }
 
-  /// ⬅️ НОВОЕ: Показать ошибку валидации
+  /// Показать ошибку валидации
   void _showValidationError(String message) {
     showDialog(
       context: context,
@@ -387,7 +390,7 @@ class _BookingSearchScreenState extends State<BookingSearchScreen> {
   Widget _buildHomeTab() {
     return Stack(
       children: [
-        // ------------------------ MAP ------------------------
+        // Map
         MapWidget(
           key: _mapKey,
           isSelectingLocation: _isSelectingLocation,
@@ -398,18 +401,18 @@ class _BookingSearchScreenState extends State<BookingSearchScreen> {
           onMapDragEnd: () async {
             await Future.delayed(const Duration(milliseconds: 150));
             if (!mounted) return;
-            setState(() => _panelState = _previousPanelState ?? PanelState.collapsed);
+            setState(() =>
+            _panelState = _previousPanelState ?? PanelState.collapsed);
           },
         ),
 
-        // ------------------------ ACTIVE REQUESTS LIST ------------------------
-        // ⬅️ НОВОЕ: Горизонтальный список активных заявок
+        // ⬅️ FIXED: Список активных заявок
         if (_activeRequests.isNotEmpty && _panelState == PanelState.collapsed)
           Positioned(
-            bottom: 230.h, // ⬅️ Поднял выше (было 180)
+            bottom: 230.h,
             left: 0,
             right: 0,
-            height: 210.h, // ⬅️ Увеличил высоту (было 195)
+            height: 210.h,
             child: ListView.builder(
               scrollDirection: Axis.horizontal,
               padding: EdgeInsets.symmetric(horizontal: 8.w),
@@ -417,7 +420,7 @@ class _BookingSearchScreenState extends State<BookingSearchScreen> {
               itemBuilder: (context, index) {
                 return SizedBox(
                   width: 340.w,
-                  height: 180.h, // ⬅️ ДОБАВИЛ фиксированную высоту
+                  height: 180.h,
                   child: ActiveRequestCardWidget(
                     request: _activeRequests[index],
                     onRefresh: _loadActiveRequest,
@@ -427,7 +430,7 @@ class _BookingSearchScreenState extends State<BookingSearchScreen> {
             ),
           ),
 
-        // ------------------------ SEARCH PANEL ------------------------
+        // Search panel
         AnimatedPositioned(
           duration: const Duration(milliseconds: 250),
           curve: Curves.easeOut,

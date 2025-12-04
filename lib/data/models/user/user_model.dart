@@ -6,6 +6,8 @@ class UserModel {
   final String? lastName;   // Теперь nullable
   final String? phone;
   final String? username;
+  /// URL аватара (может быть null)
+  final String? photoUrl;
 
   UserModel({
     this.id,
@@ -14,6 +16,7 @@ class UserModel {
     this.lastName,   // Убрали required
     this.phone,
     this.username,
+    this.photoUrl,
   });
 
   /// Create from storage map
@@ -25,6 +28,7 @@ class UserModel {
       lastName: data['lastName'],
       phone: data['phone'],
       username: data['username'],
+      photoUrl: data['photoUrl'],
     );
   }
 

@@ -7,6 +7,8 @@ class AppSettings {
   final bool emailNotificationsEnabled;
   final bool soundEnabled;
   final bool vibrationEnabled;
+  final bool newOfferNotificationsEnabled; // Уведомления о новых ответах на заявки
+  final bool reservationStatusNotificationsEnabled; // Уведомления о смене статуса бронирования
   final String theme; // 'light', 'dark', 'system'
 
   AppSettings({
@@ -16,6 +18,8 @@ class AppSettings {
     this.emailNotificationsEnabled = true,
     this.soundEnabled = true,
     this.vibrationEnabled = true,
+    this.newOfferNotificationsEnabled = true,
+    this.reservationStatusNotificationsEnabled = true,
     this.theme = 'light',
   });
 
@@ -28,6 +32,8 @@ class AppSettings {
       emailNotificationsEnabled: json['emailNotificationsEnabled'] as bool? ?? true,
       soundEnabled: json['soundEnabled'] as bool? ?? true,
       vibrationEnabled: json['vibrationEnabled'] as bool? ?? true,
+      newOfferNotificationsEnabled: json['newOfferNotificationsEnabled'] as bool? ?? true,
+      reservationStatusNotificationsEnabled: json['reservationStatusNotificationsEnabled'] as bool? ?? true,
       theme: json['theme'] as String? ?? 'light',
     );
   }
@@ -40,6 +46,8 @@ class AppSettings {
     'emailNotificationsEnabled': emailNotificationsEnabled,
     'soundEnabled': soundEnabled,
     'vibrationEnabled': vibrationEnabled,
+    'newOfferNotificationsEnabled': newOfferNotificationsEnabled,
+    'reservationStatusNotificationsEnabled': reservationStatusNotificationsEnabled,
     'theme': theme,
   };
 
@@ -51,6 +59,8 @@ class AppSettings {
     bool? emailNotificationsEnabled,
     bool? soundEnabled,
     bool? vibrationEnabled,
+    bool? newOfferNotificationsEnabled,
+    bool? reservationStatusNotificationsEnabled,
     String? theme,
   }) {
     return AppSettings(
@@ -60,6 +70,8 @@ class AppSettings {
       emailNotificationsEnabled: emailNotificationsEnabled ?? this.emailNotificationsEnabled,
       soundEnabled: soundEnabled ?? this.soundEnabled,
       vibrationEnabled: vibrationEnabled ?? this.vibrationEnabled,
+      newOfferNotificationsEnabled: newOfferNotificationsEnabled ?? this.newOfferNotificationsEnabled,
+      reservationStatusNotificationsEnabled: reservationStatusNotificationsEnabled ?? this.reservationStatusNotificationsEnabled,
       theme: theme ?? this.theme,
     );
   }

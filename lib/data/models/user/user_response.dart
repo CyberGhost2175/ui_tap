@@ -6,6 +6,8 @@ class UserResponse {
   final String? phoneNumber;
   final String? firstName;
   final String? lastName;
+  /// URL аватара пользователя (может быть null)
+  final String? photoUrl;
 
   UserResponse({
     required this.id,
@@ -14,6 +16,7 @@ class UserResponse {
     this.phoneNumber,
     this.firstName,
     this.lastName,
+    this.photoUrl,
   });
 
   /// Create from JSON
@@ -25,6 +28,7 @@ class UserResponse {
       phoneNumber: json['phoneNumber'] as String?,
       firstName: json['firstName'] as String?,
       lastName: json['lastName'] as String?,
+      photoUrl: json['photoUrl'] as String?,
     );
   }
 
@@ -36,10 +40,11 @@ class UserResponse {
     if (phoneNumber != null) 'phoneNumber': phoneNumber,
     if (firstName != null) 'firstName': firstName,
     if (lastName != null) 'lastName': lastName,
+    if (photoUrl != null) 'photoUrl': photoUrl,
   };
 
   @override
   String toString() {
-    return 'UserResponse(id: $id, username: $username, email: $email, firstName: $firstName, lastName: $lastName, phone: $phoneNumber)';
+    return 'UserResponse(id: $id, username: $username, email: $email, firstName: $firstName, lastName: $lastName, phone: $phoneNumber, photoUrl: $photoUrl)';
   }
 }

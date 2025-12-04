@@ -80,6 +80,20 @@ class SettingsStorage {
     await saveSettings(updated);
   }
 
+  /// Update new offer notifications
+  static Future<void> updateNewOfferNotifications(bool enabled) async {
+    final settings = await loadSettings();
+    final updated = settings.copyWith(newOfferNotificationsEnabled: enabled);
+    await saveSettings(updated);
+  }
+
+  /// Update reservation status notifications
+  static Future<void> updateReservationStatusNotifications(bool enabled) async {
+    final settings = await loadSettings();
+    final updated = settings.copyWith(reservationStatusNotificationsEnabled: enabled);
+    await saveSettings(updated);
+  }
+
   /// Update theme
   static Future<void> updateTheme(String theme) async {
     final settings = await loadSettings();

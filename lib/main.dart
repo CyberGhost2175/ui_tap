@@ -4,6 +4,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'core/navigation/app_router.dart';
 import 'data/services/auth_api_service.dart';
 import 'data/services/dio_client.dart';
+import 'data/services/notification_service.dart';
 
 /// 🚀 Main entry point with auto-refresh initialization
 void main() async {
@@ -11,6 +12,8 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await DioClient().init();
 
+  // 📱 Initialize notifications
+  await NotificationService().initialize();
 
   // 🔄 Initialize auto-refresh on app startup
   await _initializeAutoRefresh();

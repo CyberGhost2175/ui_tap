@@ -6,6 +6,7 @@ import 'package:ui_tap/features/profile/profile_screen.dart';
 import 'package:ui_tap/features/splash/splash_screen.dart';
 import '../../data/services/token_storage.dart';
 import '../../features/bookings/bookings_screen.dart';
+import '../../features/bookings/reservation_detail_screen.dart';
 import '../../features/home/home_screen.dart';
 import '../../features/settings/settings_screen.dart';
 // TODO: Import your actual screens
@@ -46,6 +47,13 @@ class AppRouter {
       GoRoute(
         path: '/bookings',
         builder: (context, state) => const BookingsScreen(),
+      ),
+      GoRoute(
+        path: '/bookings/:id',
+        builder: (context, state) {
+          final id = int.parse(state.pathParameters['id']!);
+          return ReservationDetailScreen(reservationId: id);
+        },
       ),
       GoRoute(
         path: '/settings',

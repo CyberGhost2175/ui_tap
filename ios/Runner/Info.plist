@@ -76,5 +76,8 @@
 
     <key>UIApplicationSupportsIndirectInputEvents</key>
     <true/>
+
+    <!-- Уведомления: разрешения запрашиваются программно через flutter_local_notifications -->
+    <!-- Для локальных уведомлений дополнительные настройки в Info.plist не требуются -->
 </dict>
 </plist>

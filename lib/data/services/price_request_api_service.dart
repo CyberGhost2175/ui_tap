@@ -1,6 +1,6 @@
 import 'package:http/http.dart' as http;
 import 'dart:convert';
-import '../models/search/price_request_models.dart';
+import '../models/search/price_request_models.dart';  // ⬅️ Импортируем модели
 import 'token_storage.dart';
 
 /// API service для работы с Price Requests (предложениями цен)

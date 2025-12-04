@@ -27,6 +27,7 @@ class TokenStorage {
   static const String _userLastNameKey = 'user_last_name';
   static const String _userPhoneKey = 'user_phone';
   static const String _userUsernameKey = 'user_username';
+  static const String _userPhotoUrlKey = 'user_photo_url';
 
   /// 💾 Save tokens after login/registration
   ///
@@ -67,6 +68,7 @@ class TokenStorage {
     required String lastName,
     String? phone,
     String? username,
+    String? photoUrl,
   }) async {
     print('💾 [STORAGE] Saving user data...');
 
@@ -78,6 +80,7 @@ class TokenStorage {
     await prefs.setString(_userLastNameKey, lastName);
     if (phone != null) await prefs.setString(_userPhoneKey, phone);
     if (username != null) await prefs.setString(_userUsernameKey, username);
+    if (photoUrl != null) await prefs.setString(_userPhotoUrlKey, photoUrl);
 
     print('✅ [STORAGE] User data saved');
   }
@@ -174,6 +177,7 @@ class TokenStorage {
       'lastName': prefs.getString(_userLastNameKey),
       'phone': prefs.getString(_userPhoneKey),
       'username': prefs.getString(_userUsernameKey),
+      'photoUrl': prefs.getString(_userPhotoUrlKey),
     };
   }
 
@@ -210,6 +214,7 @@ class TokenStorage {
     await prefs.remove(_userLastNameKey);
     await prefs.remove(_userPhoneKey);
     await prefs.remove(_userUsernameKey);
+    await prefs.remove(_userPhotoUrlKey);
 
     print('✅ [STORAGE] All data cleared');
   }
