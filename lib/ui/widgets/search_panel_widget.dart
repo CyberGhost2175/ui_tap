@@ -169,19 +169,22 @@ class SearchPanelWidgetState extends State<SearchPanelWidget> {
   int? get selectedDistrictId => _selectedDistrictId;
 
   TextEditingController? _priceController;
+  FocusNode? _priceFocusNode;
 
   @override
   void initState() {
     super.initState();
-    _selectedCityId = 1;
-    _selectedCityName = 'Алматы';
-    _loadDistricts(1);
+    _selectedCityId = 2; // Астана по умолчанию
+    _selectedCityName = 'Астана';
+    _loadDistricts(2); // Загружаем районы Астаны
     _priceController = TextEditingController(text: widget.price);
+    _priceFocusNode = FocusNode();
   }
 
   @override
   void dispose() {
     _priceController?.dispose();
+    _priceFocusNode?.dispose();
     super.dispose();
   }
 
@@ -329,26 +332,33 @@ class SearchPanelWidgetState extends State<SearchPanelWidget> {
   Widget build(BuildContext context) {
     final isCollapsed = widget.panelState == PanelState.collapsed;
 
-    return Stack(
-      children: [
-        Container(
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.vertical(bottom: Radius.circular(24.r)),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.08),
-                blurRadius: 12,
-                offset: const Offset(0, 4),
-              ),
-            ],
-          ),
-          child: Padding(
-            padding: EdgeInsets.only(
-                top: 40.h, left: 16.w, right: 16.w, bottom: 20.h),
-            child: SingleChildScrollView(
-              physics: const BouncingScrollPhysics(),
-              child: Column(
+    return GestureDetector(
+      onTap: () {
+        // ⬅️ Убираем фокус с поля цены при нажатии на пустое место
+        _priceFocusNode?.unfocus();
+        FocusScope.of(context).unfocus();
+      },
+      behavior: HitTestBehavior.opaque,
+      child: Stack(
+        children: [
+          Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.vertical(bottom: Radius.circular(24.r)),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.08),
+                  blurRadius: 12,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Padding(
+              padding: EdgeInsets.only(
+                  top: 40.h, left: 16.w, right: 16.w, bottom: 20.h),
+              child: SingleChildScrollView(
+                physics: const BouncingScrollPhysics(),
+                child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Stack(
@@ -438,6 +448,7 @@ class SearchPanelWidgetState extends State<SearchPanelWidget> {
             ),
           ),
       ],
+      ),
     );
   }
 
@@ -1162,6 +1173,7 @@ class SearchPanelWidgetState extends State<SearchPanelWidget> {
       ),
       child: TextField(
         controller: _priceController,
+        focusNode: _priceFocusNode,
         keyboardType: TextInputType.number,
         inputFormatters: [FilteringTextInputFormatter.digitsOnly],
         onChanged: widget.onPriceChanged,

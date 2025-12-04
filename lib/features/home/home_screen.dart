@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:intl/intl.dart';
@@ -46,11 +47,31 @@ class _BookingSearchScreenState extends State<BookingSearchScreen> {
   // Active requests
   List<SearchRequest> _activeRequests = [];
   bool _isLoadingActiveRequest = false;
+  Timer? _autoRefreshTimer;
 
   @override
   void initState() {
     super.initState();
     _loadActiveRequest(); // ⬅️ FIXED: Загружаем заявки сразу при входе
+    _startAutoRefresh(); // Автообновление предложений
+  }
+
+  @override
+  void dispose() {
+    _autoRefreshTimer?.cancel();
+    super.dispose();
+  }
+
+  /// Автообновление заявок каждые 15 секунд для получения новых предложений
+  void _startAutoRefresh() {
+    _autoRefreshTimer = Timer.periodic(
+      const Duration(seconds: 15),
+      (timer) {
+        if (_currentIndex == 0 && _panelState == PanelState.collapsed) {
+          _loadActiveRequest();
+        }
+      },
+    );
   }
 
   /// ⬅️ FIXED: Загрузка всех заявок БЕЗ фильтрации + убираем FINISHED

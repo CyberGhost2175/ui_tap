@@ -150,15 +150,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // Language Section
-            _buildSectionTitle('Язык'),
-            SizedBox(height: 12.h),
-            _buildLanguageTile('Русский', 'ru'),
-            SizedBox(height: 8.h),
-            _buildLanguageTile('Қазақша', 'kk'),
-            SizedBox(height: 8.h),
-            _buildLanguageTile('English', 'en'),
-
-            SizedBox(height: 32.h),
+            // _buildSectionTitle('Язык'),
+            // SizedBox(height: 12.h),
+            // _buildLanguageTile('Русский', 'ru'),
+            // SizedBox(height: 8.h),
+            // _buildLanguageTile('Қазақша', 'kk'),
+            // SizedBox(height: 8.h),
+            // _buildLanguageTile('English', 'en'),
+            //
+            // SizedBox(height: 32.h),
 
             // Notifications Section
             _buildSectionTitle('Уведомления'),

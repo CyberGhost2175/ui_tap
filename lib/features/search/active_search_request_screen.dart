@@ -34,9 +34,11 @@ class _ActiveSearchRequestScreenState extends State<ActiveSearchRequestScreen> {
 
   Timer? _autoRefreshTimer;
   Timer? _cacheCleanupTimer;
+  Timer? _uiUpdateTimer; // Для обновления таймеров в UI
   int _previousOffersCount = 0;
 
   final Map<int, _CachedPriceRequest> _cachedOffers = {};
+  DateTime? _lastLoadTime;
 
   @override
   void initState() {
@@ -47,9 +49,28 @@ class _ActiveSearchRequestScreenState extends State<ActiveSearchRequestScreen> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // ⬅️ FIXED: При возврате к экрану перезагружаем предложения
+    // Защита от лишних вызовов - перезагружаем только если прошло больше 1 секунды
+    if (_request != null && !_isLoading) {
+      final now = DateTime.now();
+      if (_lastLoadTime == null || now.difference(_lastLoadTime!).inSeconds > 1) {
+        _lastLoadTime = now;
+        Future.delayed(Duration(milliseconds: 300), () {
+          if (mounted && _request != null) {
+            _loadPriceRequests(showToastIfNew: false);
+          }
+        });
+      }
+    }
+  }
+
+  @override
   void dispose() {
     _autoRefreshTimer?.cancel();
     _cacheCleanupTimer?.cancel();
+    _uiUpdateTimer?.cancel();
     super.dispose();
   }
 
@@ -60,6 +81,7 @@ class _ActiveSearchRequestScreenState extends State<ActiveSearchRequestScreen> {
         final now = DateTime.now();
         final before = _cachedOffers.length;
 
+        // Удаляем только истекшие из кэша (для таймера), но предложения остаются в _priceRequests
         _cachedOffers.removeWhere((id, cached) {
           return now.difference(cached.addedAt).inSeconds > 15;
         });
@@ -67,8 +89,17 @@ class _ActiveSearchRequestScreenState extends State<ActiveSearchRequestScreen> {
         final after = _cachedOffers.length;
 
         if (before != after) {
-          print('🗑️ [CACHE] Removed ${before - after} expired offers');
-          setState(() {});
+          print('🗑️ [CACHE] Removed ${before - after} expired offers from cache (timer only)');
+        }
+      },
+    );
+
+    // Таймер для обновления UI таймеров
+    _uiUpdateTimer = Timer.periodic(
+      const Duration(milliseconds: 100),
+      (timer) {
+        if (mounted) {
+          setState(() {}); // Обновляем UI для анимации таймеров
         }
       },
     );
@@ -108,9 +139,10 @@ class _ActiveSearchRequestScreenState extends State<ActiveSearchRequestScreen> {
         _isLoading = false;
       });
 
-      if (request.status == 'OPEN_TO_PRICE_REQUEST') {
-        _loadPriceRequests(showToastIfNew: false);
-      }
+      // ⬅️ FIXED: Всегда загружаем предложения при загрузке заявки
+      // чтобы видеть все активные предложения, даже если вышли и вернулись
+      // Загружаем предложения для всех заявок (API сам вернет только активные)
+      await _loadPriceRequests(showToastIfNew: false);
     } catch (e) {
       setState(() {
         _error = e.toString().replaceAll('Exception: ', '');
@@ -132,17 +164,22 @@ class _ActiveSearchRequestScreenState extends State<ActiveSearchRequestScreen> {
       );
 
       final now = DateTime.now();
+      final previousOffersIds = _cachedOffers.keys.toSet();
 
       print('📥 [PRICE REQUESTS] Received ${requests.length} offers from backend');
 
+      // Обновляем кэш: сохраняем время добавления для новых предложений
       for (var request in requests) {
         if (!_cachedOffers.containsKey(request.id)) {
+          // ⬅️ НОВОЕ предложение - добавляем в кэш с текущим временем
           _cachedOffers[request.id] = _CachedPriceRequest(
             request: request,
             addedAt: now,
           );
-          print('✨ [CACHE] Added new offer ${request.id} to cache');
+          print('✨ [CACHE] Added NEW offer ${request.id} to cache');
         } else {
+          // ⬅️ СУЩЕСТВУЮЩЕЕ предложение - сохраняем старое время добавления
+          // чтобы таймер продолжал работать правильно
           _cachedOffers[request.id] = _CachedPriceRequest(
             request: request,
             addedAt: _cachedOffers[request.id]!.addedAt,
@@ -150,39 +187,33 @@ class _ActiveSearchRequestScreenState extends State<ActiveSearchRequestScreen> {
         }
       }
 
-      final displayRequests = _cachedOffers.values
-          .where((cached) {
-        final age = now.difference(cached.addedAt).inSeconds;
-        return age <= 15;
-      })
-          .map((cached) => cached.request)
-          .toList();
+      // ⬅️ FIXED: Показываем ВСЕ активные предложения с бэкенда (WAITING)
+      // независимо от кэша. Кэш используется только для таймера
+      final allDisplayRequests = requests.where((pr) => 
+        pr.clientResponseStatus == 'WAITING'
+      ).toList();
 
-      print('📊 [CACHE] Displaying ${displayRequests.length} offers (max age: 15s)');
+      print('📊 [PRICE REQUESTS] Displaying ${allDisplayRequests.length} active offers (from backend)');
 
-      final waitingRequests = displayRequests
-          .where((pr) => pr.clientResponseStatus == 'WAITING')
-          .toList();
-
-      final currentCount = waitingRequests.length;
-      final hasNewOffers = currentCount > _previousOffersCount;
+      final currentCount = allDisplayRequests.length;
+      
+      // Определяем новые предложения (которые появились с последней проверки)
+      final newOffersIds = allDisplayRequests.map((pr) => pr.id).toSet();
+      final hasNewOffers = newOffersIds.difference(previousOffersIds).isNotEmpty;
 
       setState(() {
-        _priceRequests = displayRequests;
+        _priceRequests = allDisplayRequests; // ⬅️ ВСЕГДА показываем все активные предложения
         _isLoadingOffers = false;
       });
 
       if (hasNewOffers && showToastIfNew && mounted) {
-        final newOffersCount = currentCount - _previousOffersCount;
+        final newOffersCount = newOffersIds.difference(previousOffersIds).length;
         print('🆕 [AUTO-REFRESH] Новых предложений: $newOffersCount');
         _showNewOffersToast(newOffersCount);
         
-        // Показываем уведомления для новых предложений (только что добавленных в кэш)
-        final newOffers = waitingRequests.where((pr) {
-          final cached = _cachedOffers[pr.id];
-          if (cached == null) return false;
-          // Предложение считается новым, если добавлено в последние 5 секунд
-          return DateTime.now().difference(cached.addedAt).inSeconds <= 5;
+        // Показываем уведомления для новых предложений
+        final newOffers = allDisplayRequests.where((pr) {
+          return newOffersIds.difference(previousOffersIds).contains(pr.id);
         }).toList();
         
         for (var offer in newOffers) {
@@ -197,7 +228,7 @@ class _ActiveSearchRequestScreenState extends State<ActiveSearchRequestScreen> {
       _previousOffersCount = currentCount;
 
       if (showToastIfNew) {
-        print('✅ [AUTO-REFRESH] Проверка завершена. Предложений: ${displayRequests.length}');
+        print('✅ [AUTO-REFRESH] Проверка завершена. Предложений: ${allDisplayRequests.length}');
       }
     } catch (e) {
       setState(() {
@@ -466,7 +497,14 @@ class _ActiveSearchRequestScreenState extends State<ActiveSearchRequestScreen> {
           children: [
             Icon(Icons.cancel_outlined, color: Colors.red, size: 24.sp),
             SizedBox(width: 8.w),
-            Text('Отклонить предложение?', style: TextStyle(fontSize: 18.sp, fontWeight: FontWeight.w700)),
+            Expanded(
+              child: Text(
+                'Отклонить предложение?',
+                style: TextStyle(fontSize: 18.sp, fontWeight: FontWeight.w700),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
           ],
         ),
         content: Text(
@@ -480,7 +518,10 @@ class _ActiveSearchRequestScreenState extends State<ActiveSearchRequestScreen> {
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
             child: Text('Отклонить', style: TextStyle(color: Colors.white)),
           ),
         ],
@@ -589,8 +630,11 @@ class _ActiveSearchRequestScreenState extends State<ActiveSearchRequestScreen> {
                 Navigator.pop(context, price);
               }
             },
-            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF295CDB)),
-            child: Text('Сохранить'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF295CDB),
+              foregroundColor: Colors.white,
+            ),
+            child: Text('Сохранить', style: TextStyle(color: Colors.white)),
           ),
         ],
       ),
@@ -726,8 +770,11 @@ class _ActiveSearchRequestScreenState extends State<ActiveSearchRequestScreen> {
             SizedBox(height: 24.h),
             ElevatedButton(
               onPressed: _loadRequest,
-              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF295CDB)),
-              child: const Text('Повторить'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF295CDB),
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Повторить', style: TextStyle(color: Colors.white)),
             ),
           ],
         ),
@@ -746,7 +793,11 @@ class _ActiveSearchRequestScreenState extends State<ActiveSearchRequestScreen> {
           _buildStatusCard(),
           SizedBox(height: 20.h),
 
-          if (_request!.status == 'OPEN_TO_PRICE_REQUEST' && _priceRequests.isNotEmpty) ...[
+          // ⬅️ FIXED: Показываем предложения для всех активных статусов
+          if ((_request!.status == 'OPEN_TO_PRICE_REQUEST' || 
+               _request!.status == 'PRICE_REQUEST_PENDING' ||
+               _request!.status == 'WAIT_TO_RESERVATION') && 
+              _priceRequests.isNotEmpty) ...[
             _buildPriceRequestsSection(),
             SizedBox(height: 20.h),
           ],
@@ -929,19 +980,48 @@ class _ActiveSearchRequestScreenState extends State<ActiveSearchRequestScreen> {
 
   Widget _buildStatusCard() {
     final status = _request!.statusText;
-    final isOpen = _request!.status == 'OPEN_TO_PRICE_REQUEST';
+    final statusCode = _request!.status;
+    
+    // Определяем цвет и иконку в зависимости от статуса
+    Color statusColor;
+    IconData statusIcon;
+    
+    switch (statusCode) {
+      case 'OPEN_TO_PRICE_REQUEST':
+        statusColor = Colors.green;
+        statusIcon = Icons.check_circle;
+        break;
+      case 'PRICE_REQUEST_PENDING':
+        statusColor = Colors.amber; // Желтый цвет
+        statusIcon = Icons.access_time; // Иконка часов
+        break;
+      case 'WAIT_TO_RESERVATION':
+        statusColor = Colors.purple; // Фиолетовый цвет
+        statusIcon = Icons.schedule; // Иконка часов
+        break;
+      case 'FINISHED':
+        statusColor = Colors.grey;
+        statusIcon = Icons.check_circle_outline;
+        break;
+      case 'CANCELLED':
+        statusColor = Colors.red;
+        statusIcon = Icons.cancel;
+        break;
+      default:
+        statusColor = Colors.grey;
+        statusIcon = Icons.info;
+    }
 
     return Container(
       padding: EdgeInsets.all(16.w),
       decoration: BoxDecoration(
-        color: isOpen ? Colors.green.withOpacity(0.1) : Colors.grey.withOpacity(0.1),
+        color: statusColor.withOpacity(0.1),
         borderRadius: BorderRadius.circular(12.r),
-        border: Border.all(color: isOpen ? Colors.green : Colors.grey, width: 2),
+        border: Border.all(color: statusColor, width: 2),
       ),
       child: Row(
         children: [
-          Icon(isOpen ? Icons.check_circle : Icons.cancel,
-              color: isOpen ? Colors.green : Colors.grey, size: 24.sp),
+          Icon(statusIcon, color: statusColor, size: 24.sp),
           SizedBox(width: 12.w),
           Expanded(
             child: Column(
@@ -953,7 +1033,7 @@ class _ActiveSearchRequestScreenState extends State<ActiveSearchRequestScreen> {
                     style: TextStyle(
                         fontSize: 16.sp,
                         fontWeight: FontWeight.w700,
-                        color: isOpen ? Colors.green : Colors.grey.shade700)),
+                        color: statusColor)),
               ],
             ),
           ),

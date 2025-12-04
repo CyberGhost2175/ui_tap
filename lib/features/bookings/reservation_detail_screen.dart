@@ -295,8 +295,9 @@ class _ReservationDetailScreenState extends State<ReservationDetailScreen> {
               onPressed: _loadReservation,
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF295CDB),
+                foregroundColor: Colors.white,
               ),
-              child: const Text('Повторить'),
+              child: const Text('Повторить', style: TextStyle(color: Colors.white)),
             ),
           ],
         ),
