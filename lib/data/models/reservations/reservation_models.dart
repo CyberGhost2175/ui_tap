@@ -10,6 +10,9 @@ class Reservation {
   final int accommodationUnitId;
   final String accommodationUnitName;
   final String accommodationName;
+  final String? city;
+  final String? district;
+  final String? address;
   final int priceRequestId;
   final int searchRequestId;
   final int price;
@@ -28,6 +31,9 @@ class Reservation {
     required this.accommodationUnitId,
     required this.accommodationUnitName,
     required this.accommodationName,
+    this.city,
+    this.district,
+    this.address,
     required this.priceRequestId,
     required this.searchRequestId,
     required this.price,
@@ -48,6 +54,9 @@ class Reservation {
       accommodationUnitId: (json['accommodationUnitId'] as num).toInt(),
       accommodationUnitName: json['accommodationUnitName'] as String,
       accommodationName: json['accommodationName'] as String,
+      city: json['city'] as String?,
+      district: json['district'] as String?,
+      address: json['address'] as String?,
       priceRequestId: (json['priceRequestId'] as num).toInt(),
       searchRequestId: (json['searchRequestId'] as num).toInt(),
       price: (json['price'] as num).toInt(),
@@ -69,6 +78,9 @@ class Reservation {
       'accommodationUnitId': accommodationUnitId,
       'accommodationUnitName': accommodationUnitName,
       'accommodationName': accommodationName,
+      'city': city,
+      'district': district,
+      'address': address,
       'priceRequestId': priceRequestId,
       'searchRequestId': searchRequestId,
       'price': price,

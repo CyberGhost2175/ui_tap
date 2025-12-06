@@ -433,6 +433,18 @@ class _ReservationDetailScreenState extends State<ReservationDetailScreen> {
           _buildInfoRow(Icons.hotel, 'Отель', _reservation!.accommodationName),
           SizedBox(height: 12.h),
           _buildInfoRow(Icons.bed, 'Номер', _reservation!.accommodationUnitName),
+          if (_reservation!.city != null) ...[
+            SizedBox(height: 12.h),
+            _buildInfoRow(Icons.location_city, 'Город', _reservation!.city!),
+          ],
+          if (_reservation!.district != null) ...[
+            SizedBox(height: 12.h),
+            _buildInfoRow(Icons.map, 'Район', _reservation!.district!),
+          ],
+          if (_reservation!.address != null) ...[
+            SizedBox(height: 12.h),
+            _buildInfoRow(Icons.location_on, 'Адрес', _reservation!.address!),
+          ],
           SizedBox(height: 12.h),
           _buildInfoRow(Icons.person, 'Клиент', _reservation!.clientName),
         ],

@@ -430,24 +430,27 @@ class _BookingSearchScreenState extends State<BookingSearchScreen> {
         // ⬅️ FIXED: Список активных заявок
         if (_activeRequests.isNotEmpty && _panelState == PanelState.collapsed)
           Positioned(
-            bottom: 230.h,
+            bottom: 180.h, // ⬅️ Сдвинуто ниже (было 230.h)
             left: 0,
             right: 0,
-            height: 210.h,
-            child: ListView.builder(
-              scrollDirection: Axis.horizontal,
-              padding: EdgeInsets.symmetric(horizontal: 8.w),
-              itemCount: _activeRequests.length,
-              itemBuilder: (context, index) {
-                return SizedBox(
-                  width: 340.w,
-                  height: 180.h,
-                  child: ActiveRequestCardWidget(
-                    request: _activeRequests[index],
-                    onRefresh: _loadActiveRequest,
-                  ),
-                );
-              },
+            height: 260.h, // ⬅️ Немного уменьшено (было 280.h)
+            child: Padding(
+              padding: EdgeInsets.only(top: 12.h), // ⬅️ Небольшой отступ сверху
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal,
+                padding: EdgeInsets.symmetric(horizontal: 8.w),
+                itemCount: _activeRequests.length,
+                itemBuilder: (context, index) {
+                  return SizedBox(
+                    width: 340.w,
+                    height: 240.h, // ⬅️ Немного уменьшено (было 250.h)
+                    child: ActiveRequestCardWidget(
+                      request: _activeRequests[index],
+                      onRefresh: _loadActiveRequest,
+                    ),
+                  );
+                },
+              ),
             ),
           ),
 

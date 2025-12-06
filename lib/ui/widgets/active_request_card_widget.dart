@@ -27,26 +27,20 @@ class ActiveRequestCardWidget extends StatefulWidget {
 
 class _ActiveRequestCardWidgetState extends State<ActiveRequestCardWidget> {
   final PriceRequestApiService _priceApiService = PriceRequestApiService();
-  final Map<int, _CachedPriceRequest> _cachedOffers = {};
+  List<PriceRequest> _allWaitingOffers = []; // ⬅️ Все WAITING предложения с бэкенда
   List<PriceRequest> _displayOffers = [];
   Timer? _refreshTimer;
-  Timer? _cleanupTimer;
-  Timer? _uiUpdateTimer;
 
   @override
   void initState() {
     super.initState();
     _loadOffers();
     _startAutoRefresh();
-    _startCleanupTimer();
-    _startUIUpdateTimer();
   }
 
   @override
   void dispose() {
     _refreshTimer?.cancel();
-    _cleanupTimer?.cancel();
-    _uiUpdateTimer?.cancel();
     super.dispose();
   }
 
@@ -54,7 +48,10 @@ class _ActiveRequestCardWidgetState extends State<ActiveRequestCardWidget> {
     _refreshTimer = Timer.periodic(
       const Duration(seconds: 15),
       (timer) {
-        if (widget.request.status == 'OPEN_TO_PRICE_REQUEST') {
+        // ⬅️ Загружаем предложения для всех активных заявок
+        // (не только OPEN_TO_PRICE_REQUEST, но и PRICE_REQUEST_PENDING)
+        if (widget.request.status == 'OPEN_TO_PRICE_REQUEST' || 
+            widget.request.status == 'PRICE_REQUEST_PENDING') {
           _loadOffers();
         } else {
           timer.cancel();
@@ -63,32 +60,19 @@ class _ActiveRequestCardWidgetState extends State<ActiveRequestCardWidget> {
     );
   }
 
-  void _startCleanupTimer() {
-    _cleanupTimer = Timer.periodic(
-      const Duration(seconds: 1),
-      (timer) {
-        final now = DateTime.now();
-        _cachedOffers.removeWhere((id, cached) {
-          return now.difference(cached.addedAt).inSeconds > 15;
-        });
-        _updateDisplayOffers();
-      },
-    );
-  }
-
-  void _startUIUpdateTimer() {
-    _uiUpdateTimer = Timer.periodic(
-      const Duration(milliseconds: 100),
-      (timer) {
-        if (mounted) {
-          setState(() {}); // Обновляем UI для анимации таймера
-        }
-      },
-    );
-  }
 
   Future<void> _loadOffers() async {
-    if (widget.request.status != 'OPEN_TO_PRICE_REQUEST') return;
+    // ⬅️ Загружаем предложения для всех активных заявок
+    // (не только OPEN_TO_PRICE_REQUEST, но и PRICE_REQUEST_PENDING)
+    if (widget.request.status != 'OPEN_TO_PRICE_REQUEST' && 
+        widget.request.status != 'PRICE_REQUEST_PENDING') {
+      // Если заявка не активна, очищаем предложения
+      setState(() {
+        _displayOffers = [];
+        _allWaitingOffers = [];
+      });
+      return;
+    }
 
     try {
       final requests = await _priceApiService.getPriceRequestsBySearchRequest(
@@ -97,19 +81,18 @@ class _ActiveRequestCardWidgetState extends State<ActiveRequestCardWidget> {
 
       final now = DateTime.now();
 
-      for (var request in requests) {
-        if (!_cachedOffers.containsKey(request.id)) {
-          _cachedOffers[request.id] = _CachedPriceRequest(
-            request: request,
-            addedAt: now,
-          );
-        } else {
-          _cachedOffers[request.id] = _CachedPriceRequest(
-            request: request,
-            addedAt: _cachedOffers[request.id]!.addedAt,
-          );
-        }
-      }
+      // ⬅️ Сохраняем все WAITING предложения с бэкенда
+      final waitingOffers = requests.where((pr) => 
+        pr.clientResponseStatus == 'WAITING'
+      ).toList();
+
+      print('📥 [CARD] Loaded ${waitingOffers.length} WAITING offers from backend');
+
+
+      // ⬅️ Сохраняем все WAITING предложения
+      setState(() {
+        _allWaitingOffers = waitingOffers;
+      });
 
       _updateDisplayOffers();
     } catch (e) {
@@ -118,32 +101,12 @@ class _ActiveRequestCardWidgetState extends State<ActiveRequestCardWidget> {
   }
 
   void _updateDisplayOffers() {
-    final now = DateTime.now();
-    final newOffers = _cachedOffers.values
-        .where((cached) {
-          final age = now.difference(cached.addedAt).inSeconds;
-          return age <= 15 && cached.request.clientResponseStatus == 'WAITING';
-        })
-        .map((cached) => cached.request)
-        .toList();
-
+    // ⬅️ Показываем ВСЕ активные предложения со статусом WAITING
     if (mounted) {
       setState(() {
-        _displayOffers = newOffers;
+        _displayOffers = _allWaitingOffers;
       });
     }
-  }
-
-  double _getTimerProgress(_CachedPriceRequest cached) {
-    final now = DateTime.now();
-    final age = now.difference(cached.addedAt).inSeconds;
-    return (15 - age) / 15; // От 1.0 до 0.0 за 15 секунд
-  }
-
-  int _getRemainingSeconds(_CachedPriceRequest cached) {
-    final now = DateTime.now();
-    final age = now.difference(cached.addedAt).inSeconds;
-    return (15 - age).clamp(0, 15);
   }
 
   @override
@@ -220,6 +183,7 @@ class _ActiveRequestCardWidgetState extends State<ActiveRequestCardWidget> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.start,
           children: [
             // Header: Статус + ID
             Row(
@@ -272,94 +236,108 @@ class _ActiveRequestCardWidgetState extends State<ActiveRequestCardWidget> {
               ],
             ),
 
-            SizedBox(height: 8.h), // ⬅️ Уменьшил с 10 до 8
+            SizedBox(height: 8.h),
 
-            // Info Row 1: Даты
-            Row(
-              children: [
-                Icon(
-                  Icons.calendar_today,
-                  size: 14.sp,
-                  color: Colors.white.withOpacity(0.9),
-                ),
-                SizedBox(width: 6.w),
-                Text(
-                  '$checkInDate - $checkOutDate',
-                  style: TextStyle(
-                    fontSize: 13.sp,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.white,
+            // Основная информация (компактная)
+            Flexible(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Info Row 1: Даты
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.calendar_today,
+                        size: 13.sp,
+                        color: Colors.white.withOpacity(0.9),
+                      ),
+                      SizedBox(width: 6.w),
+                      Flexible(
+                        child: Text(
+                          '$checkInDate - $checkOutDate',
+                          style: TextStyle(
+                            fontSize: 12.sp,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.white,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
                   ),
-                ),
-              ],
+
+                  SizedBox(height: 5.h),
+
+                  // Info Row 2: Гости и Тип
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.people,
+                        size: 13.sp,
+                        color: Colors.white.withOpacity(0.9),
+                      ),
+                      SizedBox(width: 6.w),
+                      Text(
+                        '${widget.request.countOfPeople} чел',
+                        style: TextStyle(
+                          fontSize: 12.sp,
+                          color: Colors.white.withOpacity(0.9),
+                        ),
+                      ),
+                      SizedBox(width: 10.w),
+                      Icon(
+                        Icons.home,
+                        size: 13.sp,
+                        color: Colors.white.withOpacity(0.9),
+                      ),
+                      SizedBox(width: 6.w),
+                      Flexible(
+                        child: Text(
+                          widget.request.unitTypesText,
+                          style: TextStyle(
+                            fontSize: 12.sp,
+                            color: Colors.white.withOpacity(0.9),
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  SizedBox(height: 5.h),
+
+                  // Info Row 3: Цена
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.attach_money,
+                        size: 13.sp,
+                        color: Colors.white.withOpacity(0.9),
+                      ),
+                      SizedBox(width: 2.w),
+                      Text(
+                        '${widget.request.price} тг/ночь',
+                        style: TextStyle(
+                          fontSize: 13.sp,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
-
-            SizedBox(height: 6.h), // ⬅️ Уменьшил с 8 до 6
-
-            // Info Row 2: Гости и Тип
-            Row(
-              children: [
-                Icon(
-                  Icons.people,
-                  size: 14.sp,
-                  color: Colors.white.withOpacity(0.9),
-                ),
-                SizedBox(width: 6.w),
-                Text(
-                  '${widget.request.countOfPeople} чел',
-                  style: TextStyle(
-                    fontSize: 13.sp,
-                    color: Colors.white.withOpacity(0.9),
-                  ),
-                ),
-                SizedBox(width: 12.w),
-                Icon(
-                  Icons.home,
-                  size: 14.sp,
-                  color: Colors.white.withOpacity(0.9),
-                ),
-                SizedBox(width: 6.w),
-                Expanded(
-                  child: Text(
-                    widget.request.unitTypesText,
-                    style: TextStyle(
-                      fontSize: 13.sp,
-                      color: Colors.white.withOpacity(0.9),
-                    ),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ],
-            ),
-
-            SizedBox(height: 6.h), // ⬅️ Уменьшил с 8 до 6
-
-            // Info Row 3: Цена
-            Row(
-              children: [
-                Icon(
-                  Icons.attach_money,
-                  size: 14.sp,
-                  color: Colors.white.withOpacity(0.9),
-                ),
-                SizedBox(width: 2.w),
-                Text(
-                  '${widget.request.price} тг/ночь',
-                  style: TextStyle(
-                    fontSize: 14.sp,
-                    fontWeight: FontWeight.w700,
-                    color: Colors.white,
-                  ),
-                ),
-              ],
-            ),
-
-            SizedBox(height: 6.h),
 
             // Предложения с таймерами (заметная версия)
             if (_displayOffers.isNotEmpty) ...[
-              Container(
-                padding: EdgeInsets.symmetric(horizontal: 10.w, vertical: 8.h),
+              SizedBox(height: 8.h),
+              Flexible(
+                child: Container(
+                  padding: EdgeInsets.symmetric(horizontal: 10.w, vertical: 6.h), // ⬅️ Уменьшено с 8.h до 6.h
                 decoration: BoxDecoration(
                   color: Colors.amber.withOpacity(0.25), // ⬅️ Более заметный фон
                   borderRadius: BorderRadius.circular(8.r),
@@ -375,14 +353,14 @@ class _ActiveRequestCardWidgetState extends State<ActiveRequestCardWidget> {
                     Row(
                       children: [
                         Container(
-                          padding: EdgeInsets.all(4.w),
+                          padding: EdgeInsets.all(3.w), // ⬅️ Уменьшено с 4.w до 3.w
                           decoration: BoxDecoration(
                             color: Colors.amber,
                             borderRadius: BorderRadius.circular(4.r),
                           ),
                           child: Icon(
                             Icons.local_offer,
-                            size: 14.sp,
+                            size: 13.sp, // ⬅️ Уменьшено с 14.sp до 13.sp
                             color: Colors.white,
                           ),
                         ),
@@ -391,7 +369,7 @@ class _ActiveRequestCardWidgetState extends State<ActiveRequestCardWidget> {
                           child: Text(
                             'Новое предложение!',
                             style: TextStyle(
-                              fontSize: 12.sp,
+                              fontSize: 11.5.sp, // ⬅️ Уменьшено с 12.sp до 11.5.sp
                               fontWeight: FontWeight.w700,
                               color: Colors.white,
                             ),
@@ -401,12 +379,8 @@ class _ActiveRequestCardWidgetState extends State<ActiveRequestCardWidget> {
                         ),
                       ],
                     ),
-                    SizedBox(height: 6.h),
+                    SizedBox(height: 5.h),
                     ..._displayOffers.take(1).map((offer) {
-                      final cached = _cachedOffers[offer.id]!;
-                      final progress = _getTimerProgress(cached);
-                      final remaining = _getRemainingSeconds(cached);
-                      
                       return Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         mainAxisSize: MainAxisSize.min,
@@ -414,69 +388,36 @@ class _ActiveRequestCardWidgetState extends State<ActiveRequestCardWidget> {
                           Text(
                             offer.safeAccommodationName,
                             style: TextStyle(
-                              fontSize: 11.sp,
+                              fontSize: 10.5.sp,
                               fontWeight: FontWeight.w600,
                               color: Colors.white,
                             ),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
-                          SizedBox(height: 4.h),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  '${offer.price} тг/ночь',
-                                  style: TextStyle(
-                                    fontSize: 12.sp,
-                                    fontWeight: FontWeight.w700,
-                                    color: Colors.amber,
-                                  ),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                              Container(
-                                padding: EdgeInsets.symmetric(horizontal: 6.w, vertical: 3.h),
-                                decoration: BoxDecoration(
-                                  color: remaining > 5 ? Colors.green : Colors.orange,
-                                  borderRadius: BorderRadius.circular(6.r),
-                                ),
-                                child: Text(
-                                  '${remaining}с',
-                                  style: TextStyle(
-                                    fontSize: 10.sp,
-                                    fontWeight: FontWeight.w700,
-                                    color: Colors.white,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                          SizedBox(height: 4.h),
-                          // Полоса прогресса таймера
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(3.r),
-                            child: LinearProgressIndicator(
-                              value: progress.clamp(0.0, 1.0),
-                              minHeight: 3.h,
-                              backgroundColor: Colors.white.withOpacity(0.2),
-                              valueColor: AlwaysStoppedAnimation<Color>(
-                                remaining > 5 ? Colors.green : Colors.orange,
-                              ),
+                          SizedBox(height: 3.h),
+                          Text(
+                            '${offer.price} тг/ночь',
+                            style: TextStyle(
+                              fontSize: 11.5.sp,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.amber,
                             ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                           ),
                         ],
                       );
                     }).toList(),
                   ],
                 ),
+                ),
               ),
-              SizedBox(height: 4.h),
             ],
 
-            // Districts (показываем только если есть место)
+            // Districts (показываем только если нет предложений и есть место)
             if (widget.request.districts.isNotEmpty && _displayOffers.isEmpty) ...[
+              SizedBox(height: 6.h),
               Wrap(
                 spacing: 4.w,
                 runSpacing: 4.h,
@@ -507,13 +448,3 @@ class _ActiveRequestCardWidgetState extends State<ActiveRequestCardWidget> {
   }
 }
 
-/// Модель для кэширования предложений с временем добавления
-class _CachedPriceRequest {
-  final PriceRequest request;
-  final DateTime addedAt;
-
-  _CachedPriceRequest({
-    required this.request,
-    required this.addedAt,
-  });
-}

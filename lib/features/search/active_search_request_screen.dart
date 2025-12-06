@@ -33,11 +33,7 @@ class _ActiveSearchRequestScreenState extends State<ActiveSearchRequestScreen> {
   String? _error;
 
   Timer? _autoRefreshTimer;
-  Timer? _cacheCleanupTimer;
-  Timer? _uiUpdateTimer; // Для обновления таймеров в UI
   int _previousOffersCount = 0;
-
-  final Map<int, _CachedPriceRequest> _cachedOffers = {};
   DateTime? _lastLoadTime;
 
   @override
@@ -45,7 +41,6 @@ class _ActiveSearchRequestScreenState extends State<ActiveSearchRequestScreen> {
     super.initState();
     _loadRequest();
     _startAutoRefresh();
-    _startCacheCleanup();
   }
 
   @override
@@ -69,42 +64,7 @@ class _ActiveSearchRequestScreenState extends State<ActiveSearchRequestScreen> {
   @override
   void dispose() {
     _autoRefreshTimer?.cancel();
-    _cacheCleanupTimer?.cancel();
-    _uiUpdateTimer?.cancel();
     super.dispose();
-  }
-
-  void _startCacheCleanup() {
-    _cacheCleanupTimer = Timer.periodic(
-      const Duration(seconds: 5),
-          (timer) {
-        final now = DateTime.now();
-        final before = _cachedOffers.length;
-
-        // Удаляем только истекшие из кэша (для таймера), но предложения остаются в _priceRequests
-        _cachedOffers.removeWhere((id, cached) {
-          return now.difference(cached.addedAt).inSeconds > 15;
-        });
-
-        final after = _cachedOffers.length;
-
-        if (before != after) {
-          print('🗑️ [CACHE] Removed ${before - after} expired offers from cache (timer only)');
-        }
-      },
-    );
-
-    // Таймер для обновления UI таймеров
-    _uiUpdateTimer = Timer.periodic(
-      const Duration(milliseconds: 100),
-      (timer) {
-        if (mounted) {
-          setState(() {}); // Обновляем UI для анимации таймеров
-        }
-      },
-    );
-
-    print('✅ [CACHE] Cleanup timer started (every 5 seconds)');
   }
 
   /// ⬅️ FIXED: Проверка каждые 15 секунд (было 60)
@@ -114,10 +74,11 @@ class _ActiveSearchRequestScreenState extends State<ActiveSearchRequestScreen> {
           (timer) {
         print('🔄 [AUTO-REFRESH] Проверяем новые предложения...');
 
-        if (_request?.status == 'OPEN_TO_PRICE_REQUEST') {
+        // ⬅️ Загружаем предложения для всех активных статусов
+        if (_request?.status == 'OPEN_TO_PRICE_REQUEST' || 
+            _request?.status == 'PRICE_REQUEST_PENDING') {
           _loadPriceRequests(showToastIfNew: true);
         } else {
-          print('⏸️ [AUTO-REFRESH] Заявка неактивна, останавливаем автообновление');
           timer.cancel();
         }
       },
@@ -163,59 +124,35 @@ class _ActiveSearchRequestScreenState extends State<ActiveSearchRequestScreen> {
         widget.requestId,
       );
 
-      final now = DateTime.now();
-      final previousOffersIds = _cachedOffers.keys.toSet();
-
-      print('📥 [PRICE REQUESTS] Received ${requests.length} offers from backend');
-
-      // Обновляем кэш: сохраняем время добавления для новых предложений
-      for (var request in requests) {
-        if (!_cachedOffers.containsKey(request.id)) {
-          // ⬅️ НОВОЕ предложение - добавляем в кэш с текущим временем
-          _cachedOffers[request.id] = _CachedPriceRequest(
-            request: request,
-            addedAt: now,
-          );
-          print('✨ [CACHE] Added NEW offer ${request.id} to cache');
-        } else {
-          // ⬅️ СУЩЕСТВУЮЩЕЕ предложение - сохраняем старое время добавления
-          // чтобы таймер продолжал работать правильно
-          _cachedOffers[request.id] = _CachedPriceRequest(
-            request: request,
-            addedAt: _cachedOffers[request.id]!.addedAt,
-          );
-        }
-      }
-
-      // ⬅️ FIXED: Показываем ВСЕ активные предложения с бэкенда (WAITING)
-      // независимо от кэша. Кэш используется только для таймера
+      // ⬅️ Показываем ВСЕ активные предложения с бэкенда (WAITING)
       final allDisplayRequests = requests.where((pr) => 
         pr.clientResponseStatus == 'WAITING'
       ).toList();
 
-      print('📊 [PRICE REQUESTS] Displaying ${allDisplayRequests.length} active offers (from backend)');
-
       final currentCount = allDisplayRequests.length;
+      
+      // ⬅️ Получаем ID существующих предложений
+      final previousOffersIds = _priceRequests.map((pr) => pr.id).toSet();
       
       // Определяем новые предложения (которые появились с последней проверки)
       final newOffersIds = allDisplayRequests.map((pr) => pr.id).toSet();
       final hasNewOffers = newOffersIds.difference(previousOffersIds).isNotEmpty;
+      
+      // Находим новые предложения
+      final newOffers = allDisplayRequests.where((pr) => 
+        !previousOffersIds.contains(pr.id)
+      ).toList();
 
       setState(() {
-        _priceRequests = allDisplayRequests; // ⬅️ ВСЕГДА показываем все активные предложения
+        _priceRequests = allDisplayRequests;
         _isLoadingOffers = false;
       });
 
       if (hasNewOffers && showToastIfNew && mounted) {
-        final newOffersCount = newOffersIds.difference(previousOffersIds).length;
-        print('🆕 [AUTO-REFRESH] Новых предложений: $newOffersCount');
+        final newOffersCount = newOffers.length;
         _showNewOffersToast(newOffersCount);
         
         // Показываем уведомления для новых предложений
-        final newOffers = allDisplayRequests.where((pr) {
-          return newOffersIds.difference(previousOffersIds).contains(pr.id);
-        }).toList();
-        
         for (var offer in newOffers) {
           await NotificationService().showNewOfferNotification(
             requestId: offer.searchRequestId,
@@ -291,6 +228,7 @@ class _ActiveSearchRequestScreenState extends State<ActiveSearchRequestScreen> {
       ),
     );
   }
+
 
   Future<void> _acceptPriceRequest(PriceRequest request) async {
     final confirm = await showDialog<bool>(
@@ -400,8 +338,6 @@ class _ActiveSearchRequestScreenState extends State<ActiveSearchRequestScreen> {
 
     try {
       print('📤 [ACCEPT] Accepting price request ${request.id}');
-
-      _cachedOffers.remove(request.id);
 
       await _priceApiService.acceptPriceRequest(request.id);
       print('✅ [ACCEPT] Success! Backend will create reservation automatically');
@@ -550,8 +486,6 @@ class _ActiveSearchRequestScreenState extends State<ActiveSearchRequestScreen> {
     );
 
     try {
-      _cachedOffers.remove(request.id);
-
       await _priceApiService.rejectPriceRequest(request.id);
 
       if (!mounted) return;
@@ -704,7 +638,6 @@ class _ActiveSearchRequestScreenState extends State<ActiveSearchRequestScreen> {
           icon: Icon(Icons.arrow_back, color: Colors.black87),
           onPressed: () {
             _autoRefreshTimer?.cancel();
-            _cacheCleanupTimer?.cancel();
             Navigator.pop(context);
           },
         ),
@@ -793,7 +726,7 @@ class _ActiveSearchRequestScreenState extends State<ActiveSearchRequestScreen> {
           _buildStatusCard(),
           SizedBox(height: 20.h),
 
-          // ⬅️ FIXED: Показываем предложения для всех активных статусов
+          // ⬅️ Показываем предложения для всех активных статусов
           if ((_request!.status == 'OPEN_TO_PRICE_REQUEST' || 
                _request!.status == 'PRICE_REQUEST_PENDING' ||
                _request!.status == 'WAIT_TO_RESERVATION') && 
@@ -1187,15 +1120,4 @@ class _ActiveSearchRequestScreenState extends State<ActiveSearchRequestScreen> {
       ],
     );
   }
-}
-
-/// Модель для кэширования предложений с временем добавления
-class _CachedPriceRequest {
-  final PriceRequest request;
-  final DateTime addedAt;
-
-  _CachedPriceRequest({
-    required this.request,
-    required this.addedAt,
-  });
 }
